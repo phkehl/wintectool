@@ -318,6 +318,28 @@ my $gps = WintecGPS->new(\%gpsopts);
 
 
 ##
+## set device info
+##
+
+if ($opts{_dosetname})
+{
+    PRINT("Setting device name to '%s'.", $opts{_dosetname});
+    $gps->setdevinfo({ name => $opts{_dosetname} });
+}
+
+if ($opts{_dosetinfo})
+{
+    PRINT("Setting device info to '%s'.", $opts{_dosetinfo});
+    $gps->setdevinfo({ info => $opts{_dosetinfo} });
+}
+if ($opts{_dosetsn})
+{
+    PRINT("Setting device S/N to '%s'.", $opts{_dosetsn});
+    $gps->setdevinfo({ sn   => $opts{_dosetsn}   }) ;
+}
+
+
+##
 ## get some info on the device
 ##
 
@@ -330,27 +352,18 @@ if ($opts{_doinfo})
           $i->{name}, $i->{info}, $i->{sn}, $v->{swver}, $v->{hwver}, $v->{fmt}, $m->{memfull});
 }
 
-
-##
-## set device info
-##
-
-$gps->setdevinfo({ name => $opts{_dosetname} }) if ($opts{_dosetname} ne '');
-$gps->setdevinfo({ info => $opts{_dosetinfo} }) if ($opts{_dosetinfo} ne '');
-$gps->setdevinfo({ sn   => $opts{_dosetsn}   }) if ($opts{_dosetsn}   ne '');
-
-
 ##
 ## get logging mode
 ##
-if (defined($opts{_dologmode}))
+if (defined $opts{_dologmode})
 {
     if ($opts{_dologmode} eq '')
     {
-        PRINT("Current logmode=%s", $gps->getlogmode());
+        PRINT("Current logging mode: %s", $gps->getlogmode());
     }
     else
     {
+        PRINT("Setting logging mode to: %s", $opts{_dologmode});
         $gps->setlogmode($opts{_dologmode});
     }
 }
@@ -439,15 +452,15 @@ if ($#{$opts{outfiles}} > -1)
 ##
 ## delete logging memory
 ##
-if (defined($opts{_dodeletelog}))
+if (defined $opts{_dodeletelog})
 {
     if ($opts{_dodeletelog} eq '')
     {
-        PRINT("You must use --deletelog=yes to delete the log and marks memory.");
+        WARNING("You must use --deletelog=yes to delete the log and marks memory.");
     }
     else
     {
-        PRINT("Deleting log in 4 seconds. Hit C-c NOW to abort!");
+        WARNING("Deleting log in 4 seconds. Hit C-c NOW to abort!");
         sleep(4);
         $gps->deletelog();
     }
@@ -458,12 +471,13 @@ if (defined($opts{_dodeletelog}))
 ## marks
 ##
 
-if (defined($opts{_dogetmarks}))
+if (defined $opts{_dogetmarks})
 {
+    PRINT("Retrieving marks to '%s'", $opts{_dogetmarks});
     $gps->getmarks($opts{_dogetmarks});
 }
 
-if (defined($opts{_dodeletemarks}))
+if (defined $opts{_dodeletemarks})
 {
     if ($opts{_dodeletemarks} eq '')
     {
@@ -486,7 +500,7 @@ if ($opts{_dosetmarks} ne '')
 ##
 ## screen shot
 ##
-if (defined($opts{_doscreenshot}))
+if (defined $opts{_doscreenshot})
 {
     $gps->screenshot($opts{_doscreenshot});
 }
@@ -690,8 +704,8 @@ use GD;
 sub DEBUG1  { main::DEBUG1("WintecGPS[1]: " . (shift), @_); }
 sub DEBUG2  { main::DEBUG2("WintecGPS[2]: " . (shift), @_); }
 sub DEBUG3  { main::DEBUG3("WintecGPS[3]: " . (shift), @_); }
-sub WARNING { main::WARNING("WintecGPS: " . (shift), @_); }
-sub ERROR   { main::ERROR("WintecGPS: " . (shift), @_); }
+sub WARNING { main::WARNING("WintecGPS[W]: " . (shift), @_); }
+sub ERROR   { main::ERROR("WintecGPS[E]: " . (shift), @_); }
 
 # constructor, takes a hash ref of serial port config
 sub new
@@ -745,7 +759,7 @@ sub openserial
     my $self = shift;
 
     # return if port already open
-    return if defined($self->{io}); # port already open
+    return if (defined $self->{io}); # port already open
 
     # initialise serial port object
     DEBUG2("Opening serial port.");
@@ -851,7 +865,7 @@ sub gpscmd
 
     # get response expecting the cmd or else what the user said
     my $expect = $cmd;
-    $expect = $gpsreadopts->{expect} if (defined($gpsreadopts->{expect}));
+    $expect = $gpsreadopts->{expect} if (defined $gpsreadopts->{expect});
     my $t = $self->gpsread($expect, $gpsreadopts);
 
     # parse reply and return payload and everything we might
@@ -912,7 +926,7 @@ sub gpsread
         # leave if we found what we were looking for
         # check that the expected data is followed by a CRLF
         my $i = index($t, $expect);
-        if (defined($expect) && $i >= $[ && rindex($t, "\r\n") > $i)
+        if (defined $expect && $i >= $[ && rindex($t, "\r\n") > $i)
         {
             DEBUG3("Got expected data: [$expect].");
             $timeout = 0;
@@ -940,19 +954,19 @@ sub getdevinfo
     my $name  = ($self->gpscmd(7,1))[0];
     if ($name eq 'error_cmd')
     {
-        $self->_PRINT("Warning: could not get device name!");
+        WARNING("Could not get device name!");
         $name = '';
     }
     my $info  = ($self->gpscmd(7,2))[0];
     if ($info eq 'error_cmd')
     {
-        $self->_PRINT("Warning: could not get device info!");
+        WARNING("Could not get device info!");
         $info = '';
     }
     my $sn    = ($self->gpscmd(7,3))[0];;
     if ($sn eq 'error_cmd')
     {
-        $self->_PRINT("Warning: could not get device serial number!");
+        WARNING("Could not get device serial number!");
         $sn   = '';
     }
 
@@ -971,7 +985,7 @@ sub setdevinfo
     my $args = shift;
 
     # get device info if not available
-    $self->getdevinfo() if !defined($self->{devinfo});
+    $self->getdevinfo() if (!defined $self->{devinfo});
 
     foreach my $key (sort keys %{$args})
     {
@@ -988,12 +1002,12 @@ sub setdevinfo
             # truncate too long strings
             if (length($args->{$key}) > $self->{args}->{devinfomaxlen})
             {
-                DEBUG1("Warning: truncating too long string for '$key'.");
+                WARNING("Truncating too long string for '$key'.");
                 $args->{$key} = substr($args->{$key}, 0, $self->{args}->{devinfomaxlen});
             }
 
             DEBUG1("Setting devinfo '%s' to [%s] (was: [%s]).",
-                        $key, $args->{$key}, $self->{devinfo}->{$key});
+                   $key, $args->{$key}, $self->{devinfo}->{$key});
 
             my $b = $key eq 'name' ? 1 : $key eq 'info' ? 2 : 3;
             my @res = $self->gpscmd(7,$b,$args->{$key});
@@ -1004,7 +1018,7 @@ sub setdevinfo
             }
             else
             {
-                $self->_PRINT("Failed setting devinfo '$key'!");
+                ERROR("Failed setting devinfo '$key'!");
             }
         }
     }
@@ -1022,26 +1036,26 @@ sub getverinfo
     my $hwver = ($self->gpscmd(8,1))[0];
     if ($hwver eq 'error_cmd')
     {
-        $self->_PRINT("Warning: could not get device hwver!");
+        WARNING("Could not get device hwver!");
         $hwver = '';
     }
     my $swver = ($self->gpscmd(8,2))[0];
     if ($swver eq 'error_cmd')
     {
-        $self->_PRINT("Warning: could not get device swver!");
+        WARNING("Could not get device swver!");
         $swver = '';
     }
     my $fmt = ($self->gpscmd(8,3))[0];
     if ($fmt eq 'error_cmd')
     {
-        $self->_PRINT("Warning: could not get device fmt!");
+        WARNING("Could not get device fmt!");
         $fmt   = '';
     }
 
     $self->{verinfo} = { hwver => $hwver, swver => $swver, fmt => $fmt };
 
     DEBUG1("hwver=[%s] swver=[%s] fmt=[%s]",
-               $self->{verinfo}->{hwver}, $self->{verinfo}->{swver}, $self->{verinfo}->{fmt});
+           $self->{verinfo}->{hwver}, $self->{verinfo}->{swver}, $self->{verinfo}->{fmt});
 
     return $self->{verinfo};
 }
@@ -1107,7 +1121,7 @@ sub downloadlog
     my $self = shift;
 
     # get memory info if not cached
-    $self->getmeminfo() if !defined($self->{meminfo});
+    $self->getmeminfo() if (!defined $self->{meminfo});
 
     DEBUG1("Downloading log.");
 
@@ -1228,7 +1242,7 @@ sub decodedata
     my $self = shift;
 
     # assert that we have some data
-    if (!defined($self->{rawdata}))
+    if (!defined $self->{rawdata})
     {
         DEBUG1("Nothing to decode!");
         return undef;
@@ -1236,7 +1250,7 @@ sub decodedata
 
     # FIXME: we should check this (see FIXME in write_bin())
     ## get version info if not cached
-    #$self->getverinfo() if (!defined($self->{verinfo}));
+    #$self->getverinfo() if (!defined $self->{verinfo});
     #
     ## assert that we can handle this data
     #if ($self->{verinfo}->{fmt} != 2)
@@ -1387,8 +1401,7 @@ sub getmarks
     my $self = shift;
     my $outputfile = shift || '';
 
-
-    if (defined($self->{marks}))
+    if (defined $self->{marks})
     {
         DEBUG1("Marks already downloaded.");
         return;
@@ -1456,7 +1469,7 @@ sub setmarks
     # process previously downloaded marks if magic filename is used
     if ($inputfile eq '*')
     {
-        die "No marks!" if (!defined($self->{marks}));
+        die "No marks!" if (!defined $self->{marks});
         foreach my $mark (@{$self->{marks}})
         {
             push(@marks, sprintf("%i,%.5f,%.5f,%i,%s",
@@ -1537,7 +1550,7 @@ sub write_bin
     foreach my $track (@{$tracks})
     {
         # skip if we do not have data for this track
-        if (!defined($self->{$outdata."raw"}->[$track]))
+        if (!defined $self->{$outdata."raw"}->[$track])
         {
             DEBUG1("No data for track #%i, nothing to save.", $track+1);
             next;
@@ -1599,7 +1612,7 @@ sub write_dat
     foreach my $track (@{$tracks})
     {
         # skip if we do not have data for this track
-        if (!defined($self->{$outdata."raw"}->[$track]))
+        if (!defined $self->{$outdata."raw"}->[$track])
         {
             DEBUG1("No data for track #%i, nothing to save.", $track+1);
             next;
@@ -1694,7 +1707,7 @@ sub write_gpx
     foreach my $track (@{$tracks})
     {
         # skip if we do not have data for this track
-        if (!defined($self->{$outdata."raw"}->[$track]))
+        if (!defined $self->{$outdata."raw"}->[$track])
         {
             DEBUG1("No data for track #%i, nothing to save.", $track+1);
             next;
@@ -1903,8 +1916,8 @@ sub setlogmode
         my @res = $self->gpscmd($c->[0], $c->[1], $c->[2]);
         if ($res[0] != $c->[2])
         {
-            DEBUG1("Error setting logmode parameter %i: %i.",
-                        $c->[1], $res[0]);
+            ERROR("Failed setting logmode parameter %i: %i.",
+                  $c->[1], $res[0]);
             return undef;
         }
     }
@@ -2091,7 +2104,7 @@ sub closeserial
     my $self = shift;
 
     # return if there's no serial port object
-    return if !defined($self->{io});
+    return if (!defined $self->{io});
 
     DEBUG2("Closing serial port.");
     $self->{io}->close();
