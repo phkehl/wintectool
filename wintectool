@@ -96,7 +96,7 @@ my %opts =
 
     # colourise output?
     colours     => (-t STDOUT ? 1 : 0), # default yes if interactive terminal
- 
+
     # timezone for output files where appropriate
     timezone => 'Europe/Zurich',
 
@@ -323,9 +323,11 @@ my $gps = WintecGPS->new(\%gpsopts);
 
 if ($opts{_doinfo})
 {
-    $gps->getdevinfo();
-    $gps->getverinfo();
-    $gps->getmeminfo();
+    my $i = $gps->getdevinfo();
+    my $v = $gps->getverinfo();
+    my $m = $gps->getmeminfo();
+    PRINT("Device Info:\n - name: %s\n - info: %s\n - S/N:  %s\n - sw:   %s\n - hw:   %s\n - fmt:  %s\n - mem:  %.1f%%",
+          $i->{name}, $i->{info}, $i->{sn}, $v->{swver}, $v->{hwver}, $v->{fmt}, $m->{memfull});
 }
 
 
@@ -423,7 +425,7 @@ if ($#{$opts{outfiles}} > -1)
                                 $outfilespec->{datum},
                                 $opts{timezone});
             }
-			if ($outfilespec->{format} eq 'gpx')
+            if ($outfilespec->{format} eq 'gpx')
             {
                 $gps->write_gpx($filenames[$n],
                                 $tracks[$n],
@@ -506,43 +508,43 @@ exit(0);
 sub WARNING
 {
     my $fmt = shift;
-    printf(_colour('WARNING') . $fmt . _colour('OFF') . "\n", @_);
+    printf(_colour('WARNING') . $fmt . _colour('OFF') . "\n", _stringify(@_));
 }
 
 sub ERROR
 {
     my $fmt = shift;
-    printf(_colour('ERROR') . $fmt . _colour('OFF') . "\n", @_);
+    printf(_colour('ERROR') . $fmt . _colour('OFF') . "\n", _stringify(@_));
 }
 
 sub NOTICE
 {
     my $fmt = shift;
-    printf(_colour('NOTICE') . $fmt . _colour('OFF') . "\n", @_) if ($opts{verbosity} > 0);
+    printf(_colour('NOTICE') . $fmt . _colour('OFF') . "\n", _stringify(@_)) if ($opts{verbosity} > 0);
 }
 
 sub PRINT
 {
     my $fmt = shift;
-    printf(_colour('PRINT') . $fmt . _colour('OFF') . "\n", @_) if ($opts{verbosity} > 1);
+    printf(_colour('PRINT') . $fmt . _colour('OFF') . "\n", _stringify(@_)) if ($opts{verbosity} > 1);
 }
 
 sub DEBUG1
 {
     my $fmt = shift;
-    printf(_colour('DEBUG1') . $fmt . _colour('OFF') . "\n", @_) if ($opts{verbosity} > 2);
+    printf(_colour('DEBUG1') . $fmt . _colour('OFF') . "\n", _stringify(@_)) if ($opts{verbosity} > 2);
 }
 
 sub DEBUG2
 {
     my $fmt = shift;
-    printf(_colour('DEBUG2') . $fmt . _colour('OFF') . "\n", @_) if ($opts{verbosity} > 3);
+    printf(_colour('DEBUG2') . $fmt . _colour('OFF') . "\n", _stringify(@_)) if ($opts{verbosity} > 3);
 }
 
 sub DEBUG3
 {
     my $fmt = shift;
-    printf(_colour('DEBUG3') . $fmt . _colour('OFF') . "\n", @_) if ($opts{verbosity} > 3);
+    printf(_colour('DEBUG3') . $fmt . _colour('OFF') . "\n", _stringify(@_)) if ($opts{verbosity} > 3);
 }
 
 sub DIE
@@ -574,6 +576,10 @@ sub _colour
     return $c{$which} || '';
 }
 
+sub _stringify
+{
+    return map { ref($_) ? Data::Dumper::Dumper($_) : $_ } @_;
+}
 
 sub formatfilename
 {
@@ -656,7 +662,7 @@ sub addoutputfile
 
     # add to list of file
     my %outputfile = ( format => $format, filename => $filename,
-                       split => $split, outdata => $outdata, 
+                       split => $split, outdata => $outdata,
                        datum => $datum);
     push(@{$opts{outfiles}}, { %outputfile });
 }
@@ -672,20 +678,18 @@ package WintecGPS;
 
 use strict;
 use warnings;
-use Device::SerialPort;
+#use Device::SerialPort; # load at run-time
+#use Win32::SerialPort;  # load at run-time
 use Time::HiRes qw( usleep );
 use DateTime;
 use List::Util qw( sum min max );
 use File::Slurp;
 use GD;
 
-use Data::Dumper;
-$Data::Dumper::Terse = 1;
-
 # wrap main debug printing functions
-sub DEBUG1  { main::DEBUG1("WintecGPS: " . (shift), @_); }
-sub DEBUG2  { main::DEBUG2("WintecGPS: " . (shift), @_); }
-sub DEBUG3  { main::DEBUG3("WintecGPS: " . (shift), @_); }
+sub DEBUG1  { main::DEBUG1("WintecGPS[1]: " . (shift), @_); }
+sub DEBUG2  { main::DEBUG2("WintecGPS[2]: " . (shift), @_); }
+sub DEBUG3  { main::DEBUG3("WintecGPS[3]: " . (shift), @_); }
 sub WARNING { main::WARNING("WintecGPS: " . (shift), @_); }
 sub ERROR   { main::ERROR("WintecGPS: " . (shift), @_); }
 
@@ -700,7 +704,38 @@ sub new
     $self->{incommandmode} = 0;
 
     bless($self, $class);
-    DEBUG2("Hello!");
+
+    # try loading serial port module
+    if ($^O =~ m/Win32/i)
+    {
+        eval
+        {
+            local $^W = 0;
+            #require Win32::API;
+            #$Win32API::CommPort::RBUF_Size = $buffersize;
+            require Win32::SerialPort;
+        };
+        if ($@)
+        {
+            ERROR('Could not load Win32::SerialPort!');
+            return undef;
+        }
+    }
+    else # assume Linux
+    {
+        eval
+        {
+            local $^W = 0;
+            require Device::SerialPort;
+        };
+        if ($@)
+        {
+            ERROR('Could not load Device::SerialPort!');
+            return undef;
+        }
+    }
+
+
     return $self;
 }
 
@@ -714,8 +749,17 @@ sub openserial
 
     # initialise serial port object
     DEBUG2("Opening serial port.");
-    $self->{io} = Device::SerialPort->new($self->{args}->{device}) ||
-      die("Failed opening port $self->{args}->{device}.");
+
+    if ($^O =~ m/Win32/i)
+    {
+        $self->{io} = Win32::SerialPort->new($self->{args}->{device}) ||
+          die("Failed opening port $self->{args}->{device}.");
+    }
+    else
+    {
+        $self->{io} = Device::SerialPort->new($self->{args}->{device}) ||
+          die("Failed opening port $self->{args}->{device}.");
+    }
     $self->{io}->baudrate($self->{args}->{baudrate})               ||
       die("Failed setting baudrate: $self->{args}->{baudrate}.");
     $self->{io}->parity($self->{args}->{parity})                   ||
@@ -859,14 +903,11 @@ sub gpsread
         $t .= $tt;
 
         # debugging
-        if ($self->{args}->{verbosity} > 4 && $tt && $tt ne '')
-        {
-            $tt =~ s/\n/<LF>/gm;
-            $tt =~ s/\r/<CR>/gm;
-            if ($tt =~ m/[^[:print:]]+/) { $tt = "BINARY: <" . length($tt) . " bytes>"; }
-            else { $tt = "ASCII: [$tt]";  }
-            DEBUG3("Got [$tt].");
-        }
+        $tt =~ s/\n/<LF>/gm;
+        $tt =~ s/\r/<CR>/gm;
+        if ($tt =~ m/[^[:print:]]+/) { $tt = "BINARY: <" . length($tt) . " bytes>"; }
+        else { $tt = "ASCII: [$tt]";  }
+        DEBUG3("Got [$tt].");
 
         # leave if we found what we were looking for
         # check that the expected data is followed by a CRLF
@@ -915,12 +956,12 @@ sub getdevinfo
         $sn   = '';
     }
 
-    %{$self->{devinfo}} = ( name => $name, info => $info, sn => $sn, );
+    $self->{devinfo} = { name => $name, info => $info, sn => $sn };
 
     DEBUG1("name=[%s] info=[%s] sn=[%s]",
                  $self->{devinfo}->{name}, $self->{devinfo}->{info}, $self->{devinfo}->{sn});
 
-    return($self->{devinfo});
+    return $self->{devinfo};
 }
 
 # set gps device info
@@ -967,7 +1008,7 @@ sub setdevinfo
             }
         }
     }
-    return($self->{devinfo});
+    return $self->{devinfo};
 }
 
 
@@ -988,7 +1029,7 @@ sub getverinfo
     if ($swver eq 'error_cmd')
     {
         $self->_PRINT("Warning: could not get device swver!");
-        $swver = ''; 
+        $swver = '';
     }
     my $fmt = ($self->gpscmd(8,3))[0];
     if ($fmt eq 'error_cmd')
@@ -997,12 +1038,12 @@ sub getverinfo
         $fmt   = '';
     }
 
-    %{$self->{verinfo}} = ( hwver => $hwver, swver => $swver, fmt => $fmt, );
+    $self->{verinfo} = { hwver => $hwver, swver => $swver, fmt => $fmt };
 
     DEBUG1("hwver=[%s] swver=[%s] fmt=[%s]",
                $self->{verinfo}->{hwver}, $self->{verinfo}->{swver}, $self->{verinfo}->{fmt});
 
-    return($self->{verinfo});
+    return $self->{verinfo};
 }
 
 # get gps log memory info
@@ -1038,14 +1079,15 @@ sub getmeminfo
     # number of marks
     my $nmarks = ($self->gpscmd(10,4))[0];
 
-    %{$self->{meminfo}} = (
-                           memid => $memid, memstart => $memstart,
-                           memend => $memend, memsize => $memsize,
-                           memfull => $memfull,
-                           logstart => $logstart, logend => $logend,
-                           logsize => $logsize, logn => $logn,
-                           nmarks => $nmarks,
-                          );
+    $self->{meminfo} =
+    {
+        memid => $memid, memstart => $memstart,
+        memend => $memend, memsize => $memsize,
+        memfull => $memfull,
+        logstart => $logstart, logend => $logend,
+        logsize => $logsize, logn => $logn,
+        nmarks => $nmarks,
+    };
 
     DEBUG1("id=0x%04x, region=0x%06x:0x%06x (%.2fMB)",
                 $self->{meminfo}->{memid}, $self->{meminfo}->{memstart}, $self->{meminfo}->{memend},
@@ -1055,7 +1097,7 @@ sub getmeminfo
                 $self->{meminfo}->{logsize}, $self->{meminfo}->{memfull});
     DEBUG1("%i marks stored on device", $self->{meminfo}->{nmarks});
 
-    return($self->{meminfo});
+    return $self->{meminfo};
 }
 
 
@@ -1396,7 +1438,7 @@ sub getmarks
         {
             $outputfile = $self->makefilename($outputfile);
             DEBUG1("Saving marks to file %s.", $outputfile);
-            write_file($outputfile, $outputdata);
+            File::Slurp::write_file($outputfile, $outputdata);
         }
     }
 }
@@ -1505,7 +1547,7 @@ sub write_bin
                     $track+1, $filename);
 
         # append to file
-        write_file($filename, { binmode => ':raw', append => 1 },
+        File::Slurp::write_file($filename, { binmode => ':raw', append => 1 },
                    $self->{$outdata."raw"}->[$track]);
     }
 }
@@ -1551,7 +1593,7 @@ sub write_dat
     $header = '# x y z'       if ($datum eq 'swissxyz');
     $header = '# lat lon ele' if ($datum eq 'wgs84llh');
     $header .= " unix_timestamp date time temp pres (flags)\n";
-    write_file($filename, { binmode => ':raw', append => 1 }, $header);
+    File::Slurp::write_file($filename, { binmode => ':raw', append => 1 }, $header);
 
     # save track(s) to file
     foreach my $track (@{$tracks})
@@ -1596,7 +1638,7 @@ sub write_dat
         $trackdata .= "\n\n";
 
         # append data to file
-        write_file($filename, { append => 1 }, $trackdata);
+        File::Slurp::write_file($filename, { append => 1 }, $trackdata);
     }
 }
 
@@ -1619,15 +1661,15 @@ sub write_gpx
     my $tracks   = shift || die "Need reference to list of tracks!";
     my $outdata  = shift || die "Need to know what data to save!";
 
-	# add or increment suffix to filename if file exists
+    # add or increment suffix to filename if file exists
     $filename = $self->makefilename($filename);
 
     DEBUG1("Saving GPX %s data for tracks %s to %s.",
                 $outdata,
                 join(", ", map { $_ + 1 } @{$tracks}), $filename);
 
-	# write header
-	my $header = '<?xml version="1.0" encoding="UTF-8"?>' ." \n"
+    # write header
+    my $header = '<?xml version="1.0" encoding="UTF-8"?>' ." \n"
       . '<gpx version="1.1" creator="wintectool - http://oinkzwurgl.org/wintectool"' ." \n"
       . '     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' ." \n"
       . '     xmlns="http://www.topografix.com/GPX/1/1"' ." \n"
@@ -1638,18 +1680,18 @@ sub write_gpx
       . '                         http://www.topografix.com/GPX/gpx_modified/0/1' ." \n"
       . '                         http://www.topografix.com/GPX/gpx_modified/0/1/gpx_modified.xsd">' ." \n";
 
-	# write bounds
+    # write bounds
     $header .= "  <metadata>\n"
       . sprintf('    <bounds minlat="%.6f" maxlat="%.6f" minlon="%.6f" maxlon="%.6f"/>',
                 $self->{tracksinfo}->{extent}->[0], $self->{tracksinfo}->{extent}->[1],
                 $self->{tracksinfo}->{extent}->[2], $self->{tracksinfo}->{extent}->[3]) . "\n"
       . '  </metadata>' . "\n";
-	write_file($filename, { append => 1 }, $header);
+    File::Slurp::write_file($filename, { append => 1 }, $header);
 
 
-	# write all tracks
-	my $trackNum = 1;
-	foreach my $track (@{$tracks})
+    # write all tracks
+    my $trackNum = 1;
+    foreach my $track (@{$tracks})
     {
         # skip if we do not have data for this track
         if (!defined($self->{$outdata."raw"}->[$track]))
@@ -1661,16 +1703,16 @@ sub write_gpx
         DEBUG2("Appending GPX track data for track #%i to %s.",
                     $track+1, $filename);
 
-		# open track
+        # open track
         my $trackdata = '  <trk>' . "\n"
           . '    <name>Track #' . $trackNum . '</name>' . "\n"
           . '    <trkseg>' . "\n";
         # FIXME: TODO: add desc
 
-		# write all track points
-		for (my $i = 0; $i < $#{$self->{$outdata}->[$track]}; $i++)
+        # write all track points
+        for (my $i = 0; $i < $#{$self->{$outdata}->[$track]}; $i++)
         {
-			my $rec = $self->{$outdata}->[$track]->[$i];
+            my $rec = $self->{$outdata}->[$track]->[$i];
 
             # open the waypoint or track point
             $trackdata .= '      <' . ($rec->{flags} & 0x02 ? 'wpt' : 'trkpt')
@@ -1683,24 +1725,24 @@ sub write_gpx
             my $dt = DateTime->from_epoch(epoch => $rec->{ts}, time_zone => 'UTC');
             $trackdata .= '<time>' . $dt->ymd('-') . 'T' . $dt->hms(':') . "Z</time>";
 
-			# FIXME: TODO: write extensions for trkpt
+            # FIXME: TODO: write extensions for trkpt
 
             # close the waypoint or trackpoint
             $trackdata .= '</'. ($rec->{flags} & 0x02 ? 'wpt' : 'trkpt') . ">\n";
 
-		}
+        }
 
-		# close the track
+        # close the track
         $trackdata .= "    </trkseg>\n";
         $trackdata .= "  </trk>\n";
 
-		$trackNum++;
+        $trackNum++;
         # flush data to file
-        write_file($filename, { append => 1 }, $trackdata);
-	}
+        File::Slurp::write_file($filename, { append => 1 }, $trackdata);
+    }
 
-	# close the gpx tag
-	write_file($filename, { append => 1 }, "</gpx>\n");
+    # close the gpx tag
+    File::Slurp::write_file($filename, { append => 1 }, "</gpx>\n");
 }
 
 
@@ -1746,8 +1788,8 @@ sub getlogmode
                 $self->{logmode}->{m}, $self->{logmode}->{mode},
                 $self->{logmode}->{v0}, $self->{logmode}->{v1}, $self->{logmode}->{c},
                 $self->{logmode}->{x1}, $self->{logmode}->{x2}, $self->{logmode}->{x3},
-                $self->{logmode}->{i1}, $self->{logmode}->{i2}, $self->{logmode}->{i3}, 
-                $self->{logmode}->{i4}, $self->{logmode}->{t}, $self->{logmode}->{d}); 
+                $self->{logmode}->{i1}, $self->{logmode}->{i2}, $self->{logmode}->{i3},
+                $self->{logmode}->{i4}, $self->{logmode}->{t}, $self->{logmode}->{d});
 
     if    ($m == 0) { return 'off'; }
     elsif ($m == 1) { return "course,$v0,$v1,$c"; }
@@ -2006,7 +2048,7 @@ sub screenshot
 
     # save image
     DEBUG1("Saving image to %s.", $filename);
-    write_file($filename, { binmode => ':raw' }, $img->png(9));
+    File::Slurp::write_file($filename, { binmode => ':raw' }, $img->png(9));
 
 }
 
