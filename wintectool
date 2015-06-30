@@ -19,6 +19,7 @@ use warnings;
 use DateTime;
 use Getopt::Long qw(:config bundling_override);
 use Pod::Usage;
+use File::Slurp;
 
 use Data::Dumper;
 $Data::Dumper::Terse = 1;
@@ -49,7 +50,7 @@ my %gpsopts =
 
     # wait delay [us] for serial input and retries for serial input before timeout
     # don't make the product of these smaller than 2 seconds
-    readdelay => 200000,
+    readdelay => 200,
     timeout   => 10,
 
     # maximum number of errors (retries) before panicking
@@ -166,8 +167,6 @@ anything other than 'WGS84'.
 The C<--timezone> options can be used with C<--dat>. See the documentation for L<DateTime::TimeZone>
 for valid arguments (e.g. C<America/Chicago> or C<+0630>).
 
-Note: a numeric suffix is added or increased to existing output files instead of overwriting them.
-
 =item C<< B<< --deletelog >> >>
 
 Deletes all logging data. Really.
@@ -205,8 +204,6 @@ C<icon#,lat,lon,elevation,name>.
 Gets and saves a screenshot from the currently displayed screen to a PNG format file. Optionally
 filename without extension can be specified. C<screenshot.png> is the default file name.
 
-Note: a numeric suffix is added or increased to existing output files instead of overwriting them.
-
 =item C<< B<< -v|--verbose >> >>, C<< B<< -q|--quiet >> >>, C<< B<< -c|--colours >> >>
 
 Sets or increases verbosity (0 = quiet, 1 = normal, >= 2 = debugging). Sets verbosity level
@@ -218,7 +215,7 @@ Sets or increases verbosity (0 = quiet, 1 = normal, >= 2 = debugging). Sets verb
 
 Set serial device to use (e.g. C</dev/ttyUSB0>) as well as its parameters. The default parameters
 are: /dev/gps0, 57600, none, 8, none. The last two flags set the number of retries to read data and
-delay [us] between retries (don't make the product of these smaller than 2 seconds).
+delay [ms] between retries (don't make the product of these smaller than 2 seconds).
 
 =back
 
@@ -377,16 +374,28 @@ if (defined $opts{_dologmode})
 if ($#{$opts{outfiles}} > -1)
 {
     # get data from file or download from device
-    if ($opts{from} ne '')
+    my $rawdata = '';
+    if ($opts{from})
     {
-        $gps->read_bin($opts{from});
+        PRINT("Reading raw data from '%s'.", $opts{from});
+        $rawdata = File::Slurp::read_file($opts{from}, { binmode => ':raw' });
     }
     else
     {
-        # FIXME: catch errors
-        $gps->downloadlog();
+        $rawdata = $gps->downloadlog();
     }
 
+    if (length($rawdata))
+    {
+        PRINT("Got %i bytes.", length($rawdata));
+    }
+    else
+    {
+        exit(1);
+    }
+
+    exit(1);
+    
     # decode data
     $gps->decodedata();
     # FIXME: catch errors and set $opts{_dodeletelog} = 0
@@ -456,7 +465,8 @@ if (defined $opts{_dodeletelog})
 {
     if ($opts{_dodeletelog} eq '')
     {
-        WARNING("You must use --deletelog=yes to delete the log and marks memory.");
+        ERROR("You must use --deletelog=yes to delete the log and marks memory.");
+        exit(1);
     }
     else
     {
@@ -473,36 +483,63 @@ if (defined $opts{_dodeletelog})
 
 if (defined $opts{_dogetmarks})
 {
-    PRINT("Retrieving marks to '%s'", $opts{_dogetmarks});
-    $gps->getmarks($opts{_dogetmarks});
+    PRINT("Retrieving marks.");
+    my $data = $gps->getmarks($opts{_dogetmarks});
+
+    if ($opts{_dogetmarks})
+    {
+        PRINT("Storing marks to '%s' (%i bytes).", $opts{_dogetmarks}, length($data));
+        File::Slurp::write_file($opts{_dogetmarks}, $data);
+    }
+    else
+    {
+        print($data);
+    }
+
 }
 
 if (defined $opts{_dodeletemarks})
 {
     if ($opts{_dodeletemarks} eq '')
     {
-        PRINT("You must use --deletemarks=yes to delete the marks.");
+        ERROR("You must use --deletemarks=yes to delete the marks.");
+        exit(1);
     }
     else
     {
-        PRINT("Deleting log in 4 seconds. Hit C-c NOW to abort!");
+        WARNING("Deleting marks in 4 seconds. Hit C-c NOW to abort!");
         sleep(4);
         $gps->deletemarks();
     }
 }
 
-if ($opts{_dosetmarks} ne '')
+if ($opts{_dosetmarks})
 {
-    $gps->setmarks($opts{_dosetmarks});
+    PRINT("Storing marks from '%s' (%i bytes).", $opts{_dosetmarks}, -s $opts{_dosetmarks});
+    my $data = File::Slurp::read_file($opts{_dosetmarks});
+    $gps->setmarks($data);
 }
 
 
 ##
 ## screen shot
 ##
+
 if (defined $opts{_doscreenshot})
 {
-    $gps->screenshot($opts{_doscreenshot});
+    PRINT("Taking screenshot.");
+    my $png = $gps->screenshot();
+
+    if ($png)
+    {
+        my $fn = $opts{_doscreenshot} || 'screenshot.png';
+        PRINT("Saving screenshot to '%s' (%i bytes).", $fn, length($png));
+        File::Slurp::write_file($fn, { binmode => ':raw' }, $png);
+    }
+    else
+    {
+        exit(1);
+    }
 }
 
 
@@ -510,8 +547,8 @@ if (defined $opts{_doscreenshot})
 ## say goodbye
 ##
 
-$gps->restartgps();
-PRINT("All done. Goodbye!");
+$gps->restartgps(); # FIXME: to get out of command mode?
+NOTICE("All done. Goodbye!");
 exit(0);
 
 
@@ -847,8 +884,7 @@ sub gpscmd
     if ($#_ >= 0) { $c = shift; $c = ",$c"; } else { $c = ''; }
 
     # additional arguments to the gpsread routine
-    my $gpsreadopts;
-    if ($#_ >= 0) { $gpsreadopts = shift; } else { $gpsreadopts = {}; }
+    my $gpsreadopts = shift || {};
 
     # ensure that we are in command mode
     $self->gocommandmode();
@@ -882,7 +918,7 @@ sub gpscmd
     DEBUG2("Got %i bytes of garbage followed by the payload [%s]",
         length($garbage), $payload);
 
-    return( ($payload, $garbage) );
+    return ($payload, $garbage);
 
 }
 
@@ -892,8 +928,7 @@ sub gpsread
     my $self = shift;
 
     my $expect = shift || undef;
-    my $opts;
-    if ($#_ >= 0) { $opts = shift; } else { $opts = {}; }
+    my $opts = shift || {};
 
     my $timeout = $opts->{timeout} ? $opts->{timeout} : $self->{args}->{timeout};
 
@@ -906,11 +941,11 @@ sub gpsread
 
         if ($opts->{progress})
         {
-            $| = 1;
-            printf("\r > %i bytes.. [%i]\r", length($t), $timeout);
+            local $| = 1;
+            printf("\r > $opts->{progress}: %4i bytes (timeout %i)\r", length($t), $timeout);
         }
 
-        usleep($self->{args}->{readdelay});
+        usleep($self->{args}->{readdelay} * 1e3);
 
         # read from serial port and add to buffer
         my $tt = $self->{io}->input();
@@ -935,8 +970,8 @@ sub gpsread
 
     if ($opts->{progress})
     {
-        $| = 1;
-        printf("\r                           \r");
+        local $| = 1;
+        printf("\r" . (" " x (length($opts->{progress}) + 20)) ."\r");
     }
 
 
@@ -1070,12 +1105,12 @@ sub getmeminfo
     my $memid      = ($self->gpscmd(4,1))[0];
     my $memstart   = ($self->gpscmd(5,9))[0];
     my $memend     = ($self->gpscmd(5,10))[0];
-    my $memsize    = $memend-$memstart;
+    my $memsize    = $memend - $memstart;
     my $logstart   = ($self->gpscmd(5,1))[0];
     my $logend     = ($self->gpscmd(5,2))[0];
     my $logsize    = -1;
     my $loglimit   = -1;
-    if ($logstart == 0 && $logend == 0)
+    if ( ($logstart == 0) && ($logend == 0) )
     {
         $logsize = 0;
     }
@@ -1145,20 +1180,19 @@ sub downloadlog
     while ($logsize > 0 && $maxerrors > 0)
     {
         DEBUG1("Reading chunk %03i/%03i @ 0x%06x (%i bytes left)",
-                   $chunks, $nchunks, $logread, $logsize);
+               $chunks, $nchunks, $logread, $logsize);
 
         # poll a chunk of data at address
         my $chunksize = min( ($self->{args}->{chunksize}, $logsize ) );
-        my @res = $self->gpscmd(5,3,$logread,
-                              { expect => '@AL,CS', timeout => $timeout,
-                                progress => 1, });
+        my @res = $self->gpscmd(5, 3, $logread,
+            { expect => '@AL,CS', timeout => $timeout, progress => "Reading chunk $chunks/$nchunks" });
 
         # retry if we didn't get anything
         if ($res[1] eq '')
         {
             $maxerrors--;
-            DEBUG1("No data while trying to read chunk. "
-                        . "%i retries left.", $maxerrors);
+            WARNING("No data while trying to read chunk %i/%i. %i retries left.",
+                    $chunks, $nchunks, $maxerrors);
             next;
         }
 
@@ -1166,9 +1200,8 @@ sub downloadlog
         my $payloadlen = length($res[1]);
         if ($payloadlen != $chunksize)
         {
-            DEBUG1("Not enough data while trying to read chunk "
-                        . "(%i < %i). %i retries left.",
-                        $payloadlen, $chunksize, $maxerrors);
+            WARNING("Not enough data while trying to read chunk %i/%i (%i < %i). %i retries left.",
+                    $chunks, $nchunks, $payloadlen, $chunksize, $maxerrors);
             next;
         }
 
@@ -1185,9 +1218,8 @@ sub downloadlog
         if ($cs != $plcs || $addr != $logread)
         {
             $maxerrors--;
-            DEBUG1("Checksum and/or address error (0x%02x != 0x%02x, "
-                        . "0x%06x != 0x%06x). %i retries left.",
-                        $cs, $plcs, $addr, $logread, $maxerrors);
+            WARNING("Checksum and/or address error in chunk %i/%i (0x%02x != 0x%02x, 0x%06x != 0x%06x). %i retries left.",
+                    $chunks, $nchunks, $cs, $plcs, $addr, $logread, $maxerrors);
             next;
         }
 
@@ -1204,22 +1236,18 @@ sub downloadlog
             $logread = $self->{meminfo}->{memstart};
         }
         $chunks++;
-
     }
+
+    DEBUG1("Got %i bytes.", $rawdata);
 
     # return error if failed
     if ($maxerrors <= 0)
     {
-        die "Too many errors and/or timeouts!";
+        ERROR("Too many errors and/or timeouts!");
+        $rawdata = '';
     }
 
-    # store raw data
-    $self->{rawdata} = $rawdata;
-    DEBUG1("Got %i bytes.", length($self->{rawdata}));
-
-    # FIXME: save TK1 header stuff here somewhere (for write_bin())
-
-    return(length($self->{rawdata}));
+    return $rawdata;
 }
 
 # delete log and marks memory
@@ -1443,31 +1471,25 @@ sub getmarks
                 DEBUG1("Cannot parse mark #%02i: %s", $n+1, $res[0]);
             }
             # sleeping a bit here seems to help
-            usleep(200000);
-        }
-
-        # save marks to file if requested
-        if ($outputfile ne '')
-        {
-            $outputfile = $self->makefilename($outputfile);
-            DEBUG1("Saving marks to file %s.", $outputfile);
-            File::Slurp::write_file($outputfile, $outputdata);
+            usleep(200e3);
         }
     }
+
+    return $outputdata;
 }
 
 # set marks on device
 sub setmarks
 {
     my $self = shift;
-    my $inputfile = shift || die "Need filename.";
+    my $data = shift;
 
     my @marks;
 
     $self->gocommandmode();
 
-    # process previously downloaded marks if magic filename is used
-    if ($inputfile eq '*')
+    # process previously downloaded marks if magic is used
+    if ($data eq '*')
     {
         die "No marks!" if (!defined $self->{marks});
         foreach my $mark (@{$self->{marks}})
@@ -1479,13 +1501,13 @@ sub setmarks
     }
     else
     {
-        @marks = split(/\r*\n/, read_file($inputfile));
+        @marks = split(/\r*\n/, $data);
         # FIXME: catch errors
     }
 
     if ($#marks == -1)
     {
-        DEBUG1("No marks data available!");
+        WARNING("No marks data available!");
         return;
     }
 
@@ -1497,27 +1519,20 @@ sub setmarks
         next if ($mark =~ m/^#|^$/);
 
         # check format and store mark
-        if ($mark =~ m/^([0-9]+),([-0-9]+\.[0-9]+),([-0-9]+\.[0-9]+),([0-9]+),([^,]+)$/
-            && $1 >= 0 && $1 < 256
-            && $2 >= -90 && $2 <= 90
-            && $3 >= -180 && $3 <= 180
-            && $4 >= 0 && $4 <= 20000) # FIXME: min/max height?
+        if ( ($mark =~ m/^([0-9]+),([-0-9]+\.[0-9]+),([-0-9]+\.[0-9]+),([0-9]+),([^,]+)$/) &&
+            ($1 >= 0) && ($1 < 256) && ($2 >= -90) && ($2 <= 90) &&
+            ($3 >= -180) && ($3 <= 180) && ($4 >= 0) && ($4 <= 20000)) # FIXME: min/max height?
         {
-            my $icon = $1;
-            my $lat = $2;
-            my $lon = $3;
-            my $ele = $4;
-            my $name = $5;
+            my ($icon, $lat, $lon, $ele, $name) = ($1, $2, $3, $4, $5);
             my $cmd = sprintf("%i,%.5f,%.5f,%i,%s",
                               $1, $2, $3, $4, substr($5, 0, 12));
             DEBUG1("Storing mark: %s", $cmd);
             $self->gpscmd(10,1,$cmd);
-            usleep(200000);
+            usleep(200e3);
         }
         else
         {
-            DEBUG1("Badly formatted line #%i in %s: %s",
-                        $line, $inputfile, $mark);
+            WARNING("Badly formatted line #%i: %s", $line, $mark);
         }
     }
 }
@@ -1565,21 +1580,6 @@ sub write_bin
     }
 }
 
-# load binary data from file
-sub read_bin
-{
-    my $self = shift;
-    my $filename = shift || die "Need filename!";
-
-    DEBUG1("Reading raw data from file %s.", $filename);
-
-    # FIXME: we must decode the TK1 header here once write_bin() saves it
-    # and do some checks..
-    my $rawdata = read_file($filename, { binmode => ':raw' });
-
-    $self->{rawdata} = $rawdata;
-    DEBUG1("Got %i bytes.", length($self->{rawdata}));
-}
 
 # write ASCII
 sub write_dat
@@ -1989,7 +1989,7 @@ sub screenshot
     while (($wait-- > 0 || $nn > 0 || $n < $expect) && $timeout-- > 0)
     {
         # wait a bit and read serial buffer
-        usleep(10000);
+        usleep(10e3);
         my $t = $self->{io}->input();
 
         # add data to a buffer
@@ -2019,10 +2019,17 @@ sub screenshot
             }
             $wait = 20;
         }
-        DEBUG1("n:$n nbits:$nbits ncols:$ncols nrows:$nrows "
-                    . "expect:$expect nn:$nn timeout:$timeout           \r");
+        local $| = 1;
+        printf("\r > n:%04i nbits:%i ncols:%03i nrows:%03i expect:%04i nn:%02i timeout:%04i\r",
+               $n, $nbits, $ncols, $nrows, $expect, $nn, $timeout);
     }
-    die "Timeout!" if ($timeout <= 0);
+    print("\r                                                                             \r");
+
+    if ($timeout <= 0)
+    {
+        ERROR("Timeout getting screenshot data!");
+        return '';
+    }
 
     $ncols++;
     $nrows++;
@@ -2031,12 +2038,10 @@ sub screenshot
     my $ncolours = 2**$nbits;
     my $width = $ncols * $bitspercol;
     my $height = $nrows;
-    DEBUG1("Got screenshot: %ix%ipx (%i colours)."
-                . "                                ",
-               $width, $height, $ncolours);
+    DEBUG1("Got screenshot: %ix%ipx (%i colours).", $width, $height, $ncolours);
 
     # make image
-    my $img = new GD::Image($width, $height);
+    my $img = GD::Image->new($width, $height);
     my @colours;
     for (my $c = 0; $c < $ncolours; $c++)
     {
@@ -2060,9 +2065,8 @@ sub screenshot
     }
 
     # save image
-    DEBUG1("Saving image to %s.", $filename);
-    File::Slurp::write_file($filename, { binmode => ':raw' }, $img->png(9));
 
+    return $img->png(9);
 }
 
 
@@ -2115,7 +2119,7 @@ sub closeserial
 sub DESTROY
 {
     my $self = shift;
-    $self->restartgps();
+    $self->restartgps(); # FIXME: to get out of command mode?
     $self->closeserial();
     DEBUG2("Goodbye!");
 }
@@ -2544,6 +2548,8 @@ settings.
 =item What's in the 24k in the memory region "end of log memory address" (5,10) - "total memory size" (5,8)?  Maybe the journey info? Can we read that at all?
 
 =item Document (names of) icons and make --getmarks and --setmarks use these.
+
+=item More error handling and propagation.
 
 =item ...
 
