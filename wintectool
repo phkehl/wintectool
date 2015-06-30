@@ -383,6 +383,7 @@ if ($#{$opts{outfiles}} > -1)
     }
     else
     {
+        PRINT("Reading raw data from device.");
         $rawdata = $gps->downloadlog();
     }
 
