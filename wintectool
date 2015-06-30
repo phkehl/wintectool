@@ -20,6 +20,7 @@ use DateTime;
 use Getopt::Long qw(:config bundling_override);
 use Pod::Usage;
 use File::Slurp;
+use Carp;
 
 use Data::Dumper;
 $Data::Dumper::Terse = 1;
@@ -394,10 +395,8 @@ if ($#{$opts{outfiles}} > -1)
         exit(1);
     }
 
-    exit(1);
-    
     # decode data
-    $gps->decodedata();
+    $gps->decodedata($rawdata);
     # FIXME: catch errors and set $opts{_dodeletelog} = 0
 
     # process each output file
@@ -602,7 +601,7 @@ sub DIE
 {
     my $why = shift;
     $why =~ s/\n$//;
-    print(STDERR _colour('DIE') . $why . _colour('OFF') . "\n");
+    print(STDERR _colour('DIE') . Capr::longmess($why) . _colour('OFF') . "\n");
     exit(1);
 }
 
@@ -1238,7 +1237,7 @@ sub downloadlog
         $chunks++;
     }
 
-    DEBUG1("Got %i bytes.", $rawdata);
+    DEBUG1("Got %i bytes.", length($rawdata));
 
     # return error if failed
     if ($maxerrors <= 0)
@@ -1268,13 +1267,8 @@ sub deletelog
 sub decodedata
 {
     my $self = shift;
+    my $rawdata = shift;
 
-    # assert that we have some data
-    if (!defined $self->{rawdata})
-    {
-        DEBUG1("Nothing to decode!");
-        return undef;
-    }
 
     # FIXME: we should check this (see FIXME in write_bin())
     ## get version info if not cached
@@ -1292,16 +1286,16 @@ sub decodedata
     # initialise data structures
     # these are arrays of tracks/waypoints, which are arrays of records or,
     # in case of raw data, strings with the binary data
-    $self->{tracks} = ();
-    $self->{waypoints} = ();
-    $self->{tracksraw} = ();
-    $self->{waypointsraw} = ();
+    $self->{tracks} = [];
+    $self->{waypoints} = [];
+    $self->{tracksraw} = [];
+    $self->{waypointsraw} = [];
 
     # FIXME: maybe we should delete() previously decoded data here or check
     # that it is not already decoded. (should not be a problem usually)
 
     # decode
-    my $datalen = length($self->{rawdata});
+    my $datalen = length($rawdata);
     my $datapos = 0;
     my $ntracks = -1;
     my $nrecords = -1;
@@ -1309,7 +1303,7 @@ sub decodedata
     while ($datapos < $datalen)
     {
         # break up binary record into an array of values
-        my $raw = substr($self->{rawdata}, $datapos, $self->{args}->{reclen});
+        my $raw = substr($rawdata, $datapos, $self->{args}->{reclen});
         my @v = unpack('S<L<l<l<s<', $raw);
 
         # decode values
@@ -1404,7 +1398,7 @@ sub decodedata
         push(@nrecords, $#{$self->{tracks}->[$i]}+1);
     }
     DEBUG2("Total extent: %f %f %f %f",
-                $extent[0], $extent[1], $extent[2], $extent[3]);
+           $extent[0], $extent[1], $extent[2], $extent[3]);
 
     # store metadata
     $self->{tracksinfo} = { ntracks => $ntracks,
@@ -1414,13 +1408,13 @@ sub decodedata
                             extent => [@extent]};
 
     DEBUG1("Got %i tracks with %s (=%i) records and %s (=%i) waypoints.",
-                $ntracks,
-                join("+", @{$self->{tracksinfo}->{nrecords}}),
-                sum(@{$self->{tracksinfo}->{nrecords}}),
-                join("+", @{$self->{tracksinfo}->{nwaypoints}}),
-                sum(@{$self->{tracksinfo}->{nwaypoints}}));
+           $ntracks,
+           join("+", @{$self->{tracksinfo}->{nrecords}}),
+           sum(@{$self->{tracksinfo}->{nrecords}}),
+           join("+", @{$self->{tracksinfo}->{nwaypoints}}),
+           sum(@{$self->{tracksinfo}->{nwaypoints}}));
 
-    return ($self->{tracksinfo});
+    return $self->{tracksinfo};
 }
 
 # get marks from device
