@@ -35,6 +35,10 @@ use constant COPYMSG => "wintectool -- Wintec WGS-1000 / Navilock NL-120GR manag
 
 wintectool -- script to manage a Wintec WGS-1000 / Navilock NL-120GR GPS logger
 
+=head1 DESCRIPTION
+
+Description...
+
 =cut
 
 ##
@@ -219,6 +223,22 @@ are: /dev/gps0, 57600, none, 8, none. The last two flags set the number of retri
 delay [ms] between retries (don't make the product of these smaller than 2 seconds).
 
 =back
+
+=head1 EXAMPLES
+
+Get device info:
+
+    wintectool --info
+
+Set owner name:
+
+    wintectool --setname=Schorsch
+
+Retrieve waypoints, edit them, and store them again:
+
+    wintectool --getmarks=meier.txt
+    $EDITOR meier.txt
+    wintectool --setmarks=meier.txt
 
 =cut
 
@@ -2123,10 +2143,6 @@ sub DESTROY
 1;
 __END__
 
-=head1 DESCRIPTION
-
-Description...
-
 =head1 WINTEC PROTOCOL AND LOG FORMAT
 
 =head2 Command Format
@@ -2522,31 +2538,33 @@ settings.
 
 =over
 
-=item Implement KML export.
+=item * Implement KML export.
 
-=item Implement unicsv export and maybe a direct interface to gpsbabel.
+=item * Implement unicsv export and maybe a direct interface to gpsbabel.
 
-=item (Maybe) Implement real tk1 read/write (i.e. bin with header) as used by TMX i in bin_write and bin_read.
+=item * (Maybe) Implement real tk1 read/write (i.e. bin with header) as used by TMX i in bin_write and bin_read.
 
-=item Once that's done, use the header information (device name etc.) for --gpx etc.
+=item * Once that's done, use the header information (device name etc.) for --gpx etc.
 
-=item Implement some good PRINT()s when verbosity = 1.
+=item * Implement some good PRINT()s when verbosity = 1.
 
-=item Handle die()s in WintecGPS nicely (i.e. better don't use them).
+=item * Handle die()s in WintecGPS nicely (i.e. better don't use them).
 
-=item Implement port autodetect (/dev/ttyUSB? etc.).
+=item * Implement port autodetect (/dev/ttyUSB? etc.).
 
-=item What's the port on Macintosh OS X? And on Windoze?
+=item * What's the port on Macintosh OS X? And on Windoze?
 
-=item Implement retries in gpscmd(). Sometimes commands timeout.
+=item * Implement retries in gpscmd(). Sometimes commands timeout.
 
-=item What's in the 24k in the memory region "end of log memory address" (5,10) - "total memory size" (5,8)?  Maybe the journey info? Can we read that at all?
+=item * What's in the 24k in the memory region "end of log memory address" (5,10) - "total memory size" (5,8)?  Maybe the journey info? Can we read that at all?
 
-=item Document (names of) icons and make --getmarks and --setmarks use these.
+=item * Document (names of) icons and make --getmarks and --setmarks use these.
 
-=item More error handling and propagation.
+=item * More error handling and propagation.
 
-=item ...
+=item * Add version number.
+
+=item * ...
 
 =back
 
