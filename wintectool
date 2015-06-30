@@ -4,7 +4,7 @@
 #
 # Tool for Wintec WSG-1000 a.k.a. the slightly fancier Navilock NL-120GR
 #
-# Copyright (c) 2009 Philippe Kehl <phkehl @ gmx dot net>
+# Copyright (c) 2009, 2015 Philippe Kehl <phkehl @ gmail dot com>
 #
 # This is free software.
 #
@@ -13,8 +13,9 @@
 
 package main;
 
-use warnings;
 use strict;
+use warnings;
+
 use DateTime;
 use Getopt::Long qw(:config bundling_override);
 use Pod::Usage;
@@ -24,89 +25,90 @@ $Data::Dumper::Terse = 1;
 
 
 use constant COPYMSG => "wintectool -- Wintec WGS-1000 / Navilock NL-120GR management tool\n"
-                      . "Copyright (c) 2009 Philippe Kehl <phkehl at gmx dot net> et al.\n"
-                      . '($Id: wintectool 1627 2010-08-05 22:20:33Z flip $)' . "\n";
+                      . "Copyright (c) 2009, 2015 Philippe Kehl <phkehl at gmail dot com> et al.\n";
 
 =pod
 
 =head1 NAME
 
-wintec -- script to manage a Wintec WGS-1000 (a.k.a. Navilock NL-120GR) GPS logger
+wintectool -- script to manage a Wintec WGS-1000 / Navilock NL-120GR GPS logger
 
 =cut
 
 ##
 ## command line options and default configuration
 ##
-my %gpsopts = (
-               # serial port
-               device => '/dev/gps0',
-               baudrate => 57600,
-               parity => 'none',
-               databits => 8,
-               handshake => 'none',
+my %gpsopts =
+(
+    # serial port
+    device    => '/dev/gps0',
+    baudrate  => 57600,
+    parity    => 'none',
+    databits  => 8,
+    handshake => 'none',
 
-               # wait delay [us] for serial input and retries for serial input
-               # before timeout
-               # don't make the product of these smaller than 2 seconds
-               readdelay => 200000,
-               timeout => 10,
+    # wait delay [us] for serial input and retries for serial input before timeout
+    # don't make the product of these smaller than 2 seconds
+    readdelay => 200000,
+    timeout   => 10,
 
-               # maximum number of errors (retries) before panicking
-               # (when downloading logged data)
-               maxerrors => 10,
+    # maximum number of errors (retries) before panicking
+    # (when downloading logged data)
+    maxerrors => 10,
 
-               # download protocol chunk size
-               chunksize => 4096,
+    # download protocol chunk size
+    chunksize => 4096,
 
-               # record length in binary data
-               reclen => 16,
+    # record length in binary data
+    reclen => 16,
 
-               # chunk size for downloading data
-               chunksize => 4096,
+    # chunk size for downloading data
+    chunksize => 4096,
 
-               # GPS timezone
-               gpstimezone => 'UTC',
+    # GPS timezone
+    gpstimezone => 'UTC',
 
-               # devinfo (name, info, sn) max length
-               devinfomaxlen => 19,
-              );
+    # devinfo (name, info, sn) max length
+    devinfomaxlen => 19,
+);
 
-my %opts = (
-            # verbosity (0 = quiet, 1 = normal, >=2 debugging)
-            verbosity => 2, # FIXME: set to 1 in release
+my %opts =
+(
+    # verbosity (0 = quiet, 1 = normal, >=2 debugging)
+    verbosity => 2, # FIXME: set to 1 in release
 
-            # input file
-            from        => '',       # '' = download from device, else read from file
+    # input file
+    from        => '',       # '' = download from device, else read from file
 
-            # output files
-            outfiles    => [],       # list of output files
+    # output files
+    outfiles    => [],       # list of output files
 
-            # default output file spec
-            outsplit    => 1,        # {0|1}, create one output file per track
-            outdata     => 'tracks', # {tracks|waypoints}, what to output
-            outfilespecdefaults => {
-                     _default => ":split:tracks:wgs84llh",
-                     bin      => ":nosplit:tracks",
-                     _split   => "TYPE_YYYYMMDD-HHMI.FMT",
-                     _nosplit => "TYPE_YYYYMMDD_all.FMT",
-                       },
+    # default output file spec
+    outsplit    => 1,        # {0|1}, create one output file per track
+    outdata     => 'tracks', # {tracks|waypoints}, what to output
+    outfilespecdefaults =>
+    {
+        _default => ":split:tracks:wgs84llh",
+        bin      => ":nosplit:tracks",
+        _split   => "TYPE_YYYYMMDD-HHMI.FMT",
+        _nosplit => "TYPE_YYYYMMDD_all.FMT",
+    },
 
-            # timezone for output files where appropriate
-            timezone => 'Europe/Zurich',
+    # timezone for output files where appropriate
+    timezone => 'Europe/Zurich',
 
-            # other stuff to do
-            _doinfo   => 0,
-            _dosetname => '',
-            _dosetinfo => '',
-            _dosetsn   => '',
-            _dologmode => undef,
-            _dodeletelog => undef,
-            _dodeletemarks => undef,
-            _dogetmarks => undef,
-            _dosetmarks => '',
-            _doscreenshot => undef,
-           );
+    # other stuff to do
+    _doinfo        => 0,
+    _dosetname     => '',
+    _dosetinfo     => '',
+    _dosetsn       => '',
+    _dologmode     => undef,
+    _dodeletelog   => undef,
+    _dodeletemarks => undef,
+    _dogetmarks    => undef,
+    _dosetmarks    => '',
+    _doscreenshot  => undef,
+);
 
 =pod
 
@@ -120,163 +122,165 @@ wintectool [options]
 
 =over 8
 
-=item B<-h|--help|--man>
+=item C<< B<< -h|--help|--man >> >>
 
-Prints usage info, with options and arguments explained or the full manual,
-including technical documentation.
+Prints usage info, with options and arguments explained or the full manual, including technical
+documentation.
 
-=item B<--{bin|dat|gpx|kml}[=[filename][:[no]split][:{tracks|waypoints}]][:datum]>
+=item C<< B<< --{bin|dat|gpx|kml}[=[filename][:[no]split][:{tracks|waypoints}]][:datum] >> >>
 
 Output file specification. The filename can contain the following placeholders:
-TYPE for either "tracks" or "waypoints".
-YYYY, YY, MM, DD, HH, MI, SS for year, two-digits year, day, month, hour, minute and second of the
-track start (or first waypoint).
-N (or more 'N's for zero padded numbers) for the track number.
-FMT for the format.
 
-You can specify this flag more than once.
+=over
 
-The default output file spec is "TYPE_YYYYMMDD-HHMI.FMT:split:tracks". The
-bin format uses "TYPE_YYYYMMDD_all.FMT:nosplit:tracks" per default.
+=item * I<TYPE> for either "tracks" or "waypoints".
 
-The flags B<--split> (or B<--no-split>), B<--tracks> and B<--waypoints> can be
-used to override the defaults for all following output file selectors.
+=item * I<YYYY>, I<YY>, I<MM>, I<DD>, I<HH>, I<MI>, I<SS> for year, two-digits year, day, month, hour,
+        minute and second of the track start (or first waypoint).
 
-The tracks and waypoint data is downloaded from the device unless
-B<--from=filename> is specified, which reads the data from the file B<filename>
-instead.
+=item * I<N >(or more 'N's for zero padded numbers) for the track number.
 
-Available (gedetic) B<:datum> option are B<:wgs84llh> and B<:swissxyz>. The
-former is the default for all output formats. The latter can only be used with
-the B<--dat> format. It implies B<--timezone=Europe/Zurich>. Note: do not set
-the datum option on the G0 screen to anything else than 'WGS84'.
+=item * I<FMT> for the format.
 
-The B<--timezone> options can be used with B<--dat>. See the documentation for
-DateTime::TimeZone for valid arguments (e.g. "America/Chicago" or "+0630").
+=back
 
-Note: a suffix is added or increased to existing output files instead of
-overwriting it.
+This flag can be specified multiple times in order to produce multiple output files.
 
-=item B<--deletelog>
+The default output file spec is C<TYPE_YYYYMMDD-HHMI.FMT:split:tracks>.
+The I<bin> format uses C<TYPE_YYYYMMDD_all.FMT:nosplit:tracks> per default.
+
+The flags C<--split> (or C<--no-split>), C<--tracks> and C<--waypoints> can be used to override the
+defaults for all following output file selectors.
+
+The tracks and waypoint data is downloaded from the device unless C<--from=filename> is specified,
+which reads the data from the file I<filename> instead.
+
+Available (gedetic) I<:datum> option are I<:wgs84llh> and I<:swissxyz>. The former is the default
+for all output formats. The latter can only be used with the C<--dat> format. It implies
+C<--timezone=Europe/Zurich>. Note: do not set the datum option on the I<G0> screen of the logger to
+anything other than 'WGS84'.
+
+The C<--timezone> options can be used with C<--dat>. See the documentation for L<DateTime::TimeZone>
+for valid arguments (e.g. C<America/Chicago> or C<+0630>).
+
+Note: a numeric suffix is added or increased to existing output files instead of overwriting them.
+
+=item C<< B<< --deletelog >> >>
 
 Deletes all logging data. Really.
 
-Note: apparently the logger can only delete the whole memory (log and
-marks). Therefore, this command downloads the marks first, then deletes the
-memory and finally stores the marks back to the device.
+Note: apparently the logger can only delete the whole memory (log and marks). Therefore, this
+command downloads the marks first, then deletes the memory and finally stores the marks back to the
+device.
 
-=item B<--info>, B<--no-info>
+=item C<< B<< --info >> >> and C<< B<< --no-info >> >>
 
-(Do not) print some info about the device. Needs a connected GPS device.
+Do (not) print some info about the device. Needs a connected GPS device.
 
-=item B<--setname>, B<--setinfo>, B<--setsn>
+=item C<< B<< --setname >> >>, C<< B<< --setinfo >> >>, C<< B<< --setsn >> >>
 
-Sets the 'name', 'info' and serial number string on the device. The 15 first
-characters of the 'name' string are visible on the device. The maximum length
-for all three strings is 19 characters each.
+Sets the I<name>, I<info> and serial number string on the device. The 15 first characters of the
+I<name> string are visible on the device. The maximum length for all three strings is 19 characters
+each.
 
-=item B<--logmode>, B<--logmode=format>
+=item C<< B<< --logmode >> >>, C<< B<< --logmode=format >> >>
 
-Gets and sets the current logging mode parameters. Valid formats are: "off",
-"course,v0,v1,c", "velocity,v0,x1,x2,x3,v1,i1,i2,i3,i4", "time,v0,v1,t",
-"distance,v0,v1,d" and "mixed,v0,v1,t,d". See the section "Logging setup
-commands" of the manual for details. You need to set the log mode (screen B0)
-on the device to "User Mode" for this to work.
+Gets and sets the current logging mode parameters. Valid formats are: I<off>, I<course,v0,v1,c>,
+I<velocity,v0,x1,x2,x3,v1,i1,i2,i3,i4>, I<time,v0,v1,t>, I<distance,v0,v1,d> and
+I<mixed,v0,v1,t,d>. See the section "Logging setup commands" of the manual for details. You need to
+set the log mode (screen I<B0> on the device) on the device to "User Mode" for this to work.
 
-=item B<--getmarks>, B<--getmarks=filename>, B<--setmarks=filename>, B<--deletemarks>
+=item C<< B<< --getmarks >> >>, C<< B<< --getmarks=filename >> >>, C<< B<< --setmarks=filename >> >>, C<< B<< --deletemarks >>
 
-Download marks from device and, optionally, save them to a file. Read marks and
-*add* them to the list of marks on the device. Delete all marks on the
-device. The commands are executed in this order: getmarks, deletemarks,
-setmarks. The mark/file format is: icon#,lat,lon,elevation,name.
+Download marks from device and, optionally, save them to a file. Reads marks and *adds* them to the
+list of marks on the device. Deletes all marks on the device. The commands are executed in this
+order: I<getmarks>, I<deletemarks>, I<setmarks>. The mark/file format is:
+C<icon#,lat,lon,elevation,name>.
 
-=item B<--screenshot>
+=item C<< B<< --screenshot >> >>
 
-Gets and saves a screenshot from the currently displayed screen. Optionally
-filename without extension can be specified.
+Gets and saves a screenshot from the currently displayed screen to a PNG format file. Optionally
+filename without extension can be specified. C<screenshot.png> is the default file name.
 
-=item B<-v|--verbose>, B<-q|--quiet>
+Note: a numeric suffix is added or increased to existing output files instead of overwriting them.
 
-Set or increase verbosity (0 = quiet, 1 = normal, >= 2 = debugging). B<-q>
-sets zero verbosity.
+=item C<< B<< -v|--verbose >> >>, C<< B<< -q|--quiet >> >>
 
-=item B<-d|--device>, B<--baudrate>, B<--parity>, B<--databits>
+Sets or increases verbosity (0 = quiet, 1 = normal, >= 2 = debugging). Sets verbosity level 0.
 
-=item B<--handshake>, B<--timeout>, B<--readdelay>
+=item C<< B<< -d|--device >> >>, C<< B<< --baudrate >> >>, C<< B<< --parity >> >>, C<< B<< --databits >> >>
 
-Set serial device to use (e.g. /dev/ttyUSB0) as well as its parameters. The
-default parameters are: 57600, none, 8, none. The last two flags set the number
-of retries to read data and delay [us] between retries (don't make the product
-of these smaller than 2 seconds).
+=item C<< B<< --handshake >> >>, C<< B<< --timeout >> >>, C<< B<< --readdelay >> >>
+
+Set serial device to use (e.g. C</dev/ttyUSB0>) as well as its parameters. The default parameters
+are: /dev/gps0, 57600, none, 8, none. The last two flags set the number of retries to read data and
+delay [us] between retries (don't make the product of these smaller than 2 seconds).
 
 =back
 
 =cut
 
 GetOptions(
-           # handle cries for help
-           'h'    => sub { pod2usage({-verbose => 0, -exitval => 0,
-                                      -message => COPYMSG}); },
-           'help' => sub { pod2usage({-verbose => 1, -exitval => 0,
-                                      -message => COPYMSG}); },
-           'man'  => sub { pod2usage({-verbose => 2, -exitval => 0,
-                                      -message => COPYMSG}); },
+    # handle cries for help
+    'h'    => sub { pod2usage({ -verbose => 0, -exitval => 0, -message => COPYMSG }); },
+    'help' => sub { pod2usage({ -verbose => 1, -exitval => 0, -message => COPYMSG }); },
+    'man'  => sub { pod2usage({ -verbose => 2, -exitval => 0, -message => COPYMSG }); },
 
-           # debugging
-           'v|verbose:+'    => \$opts{verbosity},
-           'q|quiet'        => sub { $opts{verbosity} = 0; },
+    # debugging
+    'v|verbose:+'      => \$opts{verbosity},
+    'q|quiet'          => sub { $opts{verbosity} = 0; },
 
-           # serial port options
-           'd|device=s'     => \$gpsopts{device},
-           'baudrate=i'     => \$gpsopts{baudrate},
-           'parity=s'       => \$gpsopts{parity},
-           'databits=i'     => \$gpsopts{databits},
-           'handshake=s'    => \$gpsopts{handshake},
+    # serial port options
+    'd|device=s'       => \$gpsopts{device},
+    'baudrate=i'       => \$gpsopts{baudrate},
+    'parity=s'         => \$gpsopts{parity},
+    'databits=i'       => \$gpsopts{databits},
+    'handshake=s'      => \$gpsopts{handshake},
 
-           # gps i/o and data format options
-           'readdelay=i'    => \$gpsopts{readdelay},
-           'timeout=i'      => \$gpsopts{timeout},
-           'maxerrors=i'    => \$gpsopts{maxerrors},
-           'chunksize=i'    => \$gpsopts{chunksize},
-           'reclen=i'       => \$gpsopts{reclen},
+    # gps i/o and data format options
+    'readdelay=i'      => \$gpsopts{readdelay},
+    'timeout=i'        => \$gpsopts{timeout},
+    'maxerrors=i'      => \$gpsopts{maxerrors},
+    'chunksize=i'      => \$gpsopts{chunksize},
+    'reclen=i'         => \$gpsopts{reclen},
 
-           # data input from file instead of downloading from the device
-           'from=s'         => \$opts{from},
+    # data input from file instead of downloading from the device
+    'from=s'           => \$opts{from},
 
-           # output file specification flags
-           'outsplit|split!' => \$opts{outsplit},
-           'tracks'         => sub { $opts{outdata} = 'tracks'; },
-           'waypoints'      => sub { $opts{outdata} = 'waypoints'; },
-           # we need to list these all here. we cannot use aliases
-           # because $_[0]->{name} will contain the option name
-           # if an alias has been specified on the command line
-           'bin:s'          => sub { addoutputfile(@_); },
-           'dat:s'          => sub { addoutputfile(@_); },
-           'kml:s'          => sub { addoutputfile(@_); },
-           'gpx:s'          => sub { addoutputfile(@_); },
-           'timezone=s'     => \$opts{timezone},
+    # output file specification flags
+    'outsplit|split!'  => \$opts{outsplit},
+    'tracks'           => sub { $opts{outdata} = 'tracks'; },
+    'waypoints'        => sub { $opts{outdata} = 'waypoints'; },
+    # we need to list these all here. we cannot use aliases
+    # because $_[0]->{name} will contain the option name
+    # if an alias has been specified on the command line
+    'bin:s'            => sub { addoutputfile(@_); },
+    'dat:s'            => sub { addoutputfile(@_); },
+    'kml:s'            => sub { addoutputfile(@_); },
+    'gpx:s'            => sub { addoutputfile(@_); },
+    'timezone=s'       => \$opts{timezone},
 
-           # get/set info commands
-           'info!'          => \$opts{_doinfo},
-           'setname=s'      => \$opts{_dosetname},
-           'setinfo=s'      => \$opts{_dosetinfo},
-           'setsn=s'        => \$opts{_dosetsn},
+    # get/set info commands
+    'info!'            => \$opts{_doinfo},
+    'setname=s'        => \$opts{_dosetname},
+    'setinfo=s'        => \$opts{_dosetinfo},
+    'setsn=s'          => \$opts{_dosetsn},
 
-           # logmode
-           'logmode:s'      => \$opts{_dologmode},
+    # logmode
+    'logmode:s'        => \$opts{_dologmode},
 
-           # delete log
-           'deletelog:s'    => \$opts{_dodeletelog},
+    # delete log
+    'deletelog:s'      => \$opts{_dodeletelog},
 
-           # marks (POIs)
-           'getmarks:s' => \$opts{_dogetmarks},
-           'setmarks=s' => \$opts{_dosetmarks},
-           'deletemarks:s'  => \$opts{_dodeletemarks},
+    # marks (POIs)
+    'getmarks:s'       => \$opts{_dogetmarks},
+    'setmarks=s'       => \$opts{_dosetmarks},
+    'deletemarks:s'    => \$opts{_dodeletemarks},
 
-           # screenshot
-           'screenshot:s' => \$opts{_doscreenshot},
+    # screenshot
+    'screenshot:s'     => \$opts{_doscreenshot},
 
-          ) || pod2usage({-verbose => 0, -exitval => 1});
+) || pod2usage({ -verbose => 0, -exitval => 1 });
 
 # copy verbosity from program options to gps object options
 $gpsopts{verbosity} = $opts{verbosity};
@@ -305,6 +309,7 @@ if ($opts{_doinfo})
     $gps->getmeminfo();
 }
 
+
 ##
 ## set device info
 ##
@@ -313,6 +318,7 @@ $gps->setdevinfo({ name => $opts{_dosetname} }) if ($opts{_dosetname} ne '');
 $gps->setdevinfo({ info => $opts{_dosetinfo} }) if ($opts{_dosetinfo} ne '');
 $gps->setdevinfo({ sn   => $opts{_dosetsn}   }) if ($opts{_dosetsn}   ne '');
 
+
 ##
 ## get logging mode
 ##
@@ -320,14 +326,14 @@ if (defined($opts{_dologmode}))
 {
     if ($opts{_dologmode} eq '')
     {
-        msg("Current logmode=%s\n",
-            $gps->getlogmode());
+        msg("Current logmode=%s\n", $gps->getlogmode());
     }
     else
     {
         $gps->setlogmode($opts{_dologmode});
     }
 }
+
 
 ##
 ## download, decode and save log
@@ -409,7 +415,6 @@ if ($#{$opts{outfiles}} > -1)
 }
 
 
-
 ##
 ## delete logging memory
 ##
@@ -426,7 +431,6 @@ if (defined($opts{_dodeletelog}))
         $gps->deletelog();
     }
 }
-
 
 
 ##
@@ -467,7 +471,6 @@ if (defined($opts{_doscreenshot}))
 }
 
 
-
 ##
 ## say goodbye
 ##
@@ -475,8 +478,6 @@ if (defined($opts{_doscreenshot}))
 $gps->restartgps();
 msg("\nAll done. Goodbye!\n");
 exit(0);
-
-
 
 
 ##
@@ -578,10 +579,6 @@ sub addoutputfile
                        datum => $datum);
     push(@{$opts{outfiles}}, { %outputfile });
 }
-
-
-
-
 
 
 ###############################################################################
@@ -1993,6 +1990,7 @@ sub DESTROY
 }
 
 
+1;
 __END__
 
 =head1 DESCRIPTION
@@ -2003,53 +2001,48 @@ Description...
 
 =head2 Command Format
 
-send (PC --> GPS): B<@AL,a,b[,p]+CRLF>
+send (PC --> GPS): C<@AL,a,b[,p]+CRLF>
 
-read (PC <-- GPS): B<@AL,a,b[,p],OK+CRLF>
+read (PC <-- GPS): C<@AL,a,b[,p],OK+CRLF>
 
-Where B<a> and B<n> specify the command and B<p> is an optional parameter to
-the argument.
+Where I<a> and I<n> specify the command and I<p> is an optional parameter to the argument.
 
-In all cases (but command 5,3) the GPS quotes the exact command followed by
-B<,OK> on success.
+In all cases (but command 5,3) the GPS quotes the exact command followed by C<,OK> on success.
 
-On error it outputs B<err_cmd> or B<err_arg> instead of B<OK>.
+On error it outputs C<err_cmd> or C<err_arg> instead of C<OK>.
 
-B<not_support_yet> is returned for commands that are not supported or not
-implemented.
+C<not_support_yet> is returned for commands that are not supported or not implemented.
 
-The GPS will store (or execute) the parameter B<p> when the command is sent to
-the GPS (setting).
+The GPS will store (or execute) the parameter I<p> when the command is sent to the GPS (setting).
 
-The GPS will return the saved parameter B<p> (payload) if it is not set when
-sending the command (polling).
+The GPS will return the saved parameter I<p> (payload) if it is not set when sending the command
+(polling).
 
-B<+CRLF> is \r\n.
+C<+CRLF> is \r\n.
 
-The command B<@AL> (or B<@AL,1xxxx> with password B<xxxx>) is used to "login"
-to the device. The device then returns B<LoginOK>.
+The command C<@AL> (or C<@AL,1xxxx> with password C<xxxx>) is used to "login" to the device. The
+device then returns C<LoginOK>.
 
-The WSG-1000 does not react on this command. But the command B<@AL,2,3> will
-put the device into command mode, which has the same effect. In fact, it will
-return B<LoginOK> three times before acknowledging the command.
+The WSG-1000 does not react on this command. But the command C<@AL,2,3> will put the device into
+command mode, which has the same effect. In fact, it will return C<LoginOK> three times before
+acknowledging the command.
 
 =head2 Available Commands
 
-The commands listed below should work on other Wintec receivers as
-well. However, only the Wintec WSG-1000 (a.k.a. Navilock NL-120GR) has been
-tested. The commands to and/or responses from this receiver may look different on
-other receivers.
+The commands listed below should work on other Wintec receivers as well. However, only the Wintec
+WSG-1000 / Navilock NL-120GR has been tested. The commands to and/or responses from this receiver
+may look different on other receivers.
 
-=head3 Unkown commands (group 1)
+=head3 Unknown commands (group 1)
 
-=over 10
+=over
 
-=item B<1,1,x>, B<1,1>
+=item CB<1,1,x>, B<1,1>
 
 Apparently sets and gets the "auto sleep counter value". Whatever that would
 be. Returns B<not_support_yet> on the NL-120GR.
 
-=item B<1,2,x>, B<1,2>
+=item C<1,2,x>, B<1,2>
 
 Apparently sets and gets the "over speed limit value". Returns B<err_cmd> on
 the NL-120GR.
@@ -2058,48 +2051,48 @@ the NL-120GR.
 
 =head3 GPS control commands (group 2)
 
-=over 10
+=over
 
-=item B<2,1>
+=item C<2,1>
 
-Leaves the command mode and returns B<OK>. Maybe restarts the GPS.
+Leaves the command mode and returns C<OK>. Maybe restarts the GPS.
 
-=item B<2,2>
+=item C<2,2>
 
-Leaves the command mode and returns B<OK>. Maybe restarts the GPS.
+Leaves the command mode and returns C<OK>. Maybe restarts the GPS.
 
-=item B<2,3>
+=item C<2,3>
 
-Returns B<OK> and enables command mode (the display reads "Command Mode"). NMEA
-output is disabled during command mode (called "bypass" in the original specs).
+Returns B<OK> and enables command mode (the display reads "Command Mode"). NMEA output is disabled
+during command mode (called "bypass" in the original specs).
 
-=item B<2,4>
+=item C<2,4>
 
-Returns B<not_support_yet>.
+Returns C<not_support_yet>.
 
 =back
 
 =head3 Unknow commands (group 3)
 
-=over 10
+=over
 
-=item B<3,1,1xxx>
+=item C<3,1,1xxx>
 
-Apparently sets the password to B<xxxx>, where x = [0-9]. Returns
-B<not_support_yet> on the NL-120GR.
+Apparently sets the password to C<xxxx>, where x = [0-9]. Returns C<not_support_yet> on the
+NL-120GR.
 
-=item B<3,2>
+=item C<3,2>
 
-Apparently disables the password (once logged in with the password). Returns
-B<not_support_yet> on the NL-120GR.
+Apparently disables the password (once logged in with the password). Returns C<not_support_yet> on
+the NL-120GR.
 
 =back
 
 =head3 Memory info commands (group 4)
 
-=over 10
+=over
 
-=item B<4,1>
+=item C<4,1>
 
 Returns the memory ID (e.g. 48961). This is probably not very useful.
 
@@ -2107,126 +2100,125 @@ Returns the memory ID (e.g. 48961). This is probably not very useful.
 
 =head3 Logging memory commands (group 5)
 
-The logged data is stored in the memory region returned by the B<5,1> and
-B<5,2> commands. The logger starts overwriting memory at the start of the
-memory when it reaches the end of it (i.e. when memory is full). Hence, if the
-address returned by the B<5,2> command is less than the address returned by
-B<5,1> command we have to read from the start of log address (returned by the
-B<5,1> command) to the end of memory (address returned by the B<5,10> command)
-and then from the start of the memory (address returned by the B<5,9> command)
-to the end of log address (returned by the B<5,2> command).
+The logged data is stored in the memory region returned by the C<5,1> and C<5,2> commands. The
+logger starts overwriting memory at the start of the memory when it reaches the end of it (i.e. when
+memory is full). Hence, if the address returned by the C<5,2> command is less than the address
+returned by C<5,1> command we have to read from the start of log address (returned by the C<5,1>
+command) to the end of memory (address returned by the C<5,10> command) and then from the start of
+the memory (address returned by the C<5,9> command) to the end of log address (returned by the
+C<5,2> command).
 
-=over 10
+=over
 
-=item B<5,1>
+=item C<5,1>
 
-Returns the start address of the log in memory (e.g. B<0>)
+Returns the start address of the log in memory (e.g. C<0>)
 
-=item B<5,2>
+=item C<5,2>
 
-Returns the end address of the log in memory (e.g. B<23472>)
+Returns the end address of the log in memory (e.g. C<23472>)
 
-=item B<5,3,addr>
+=item C<5,3,addr>
 
-Returns the chunk of data (up to 4096 bytes) at address B<addr> followed by a
-checksum string in the format B<@AL,CS,checksum,addr>. The B<checksum> is the
+Returns the chunk of data (up to 4096 bytes) at address C<addr> followed by a
+checksum string in the format C<@AL,CS,checksum,addr>. The C<checksum> is the
 hex representation of the XOR of all bytes in the data chunk (a 1-2 bytes
 string).
 
-=item B<5,4>, B<5,4>
+=item C<5,4>, C<5,4>
 
 Deletes all log data. Note: takes 4-5 seconds to finish.
 
-=item B<5,5,0>
+=item C<5,5,0>
 
 Returns OK. FIXME: not sure what this does.
 
-=item B<5,6>
+=item C<5,6>
 
 Deletes all log and POI data. Note: takes 4-5 seconds to finish.
 
-=item B<5,7,x>
+=item C<5,7,x>
 
-Returns 0, for all B<x> (incl. empty string). FIXME: not sure what this does.
+Returns 0, for all C<x> (incl. empty string). FIXME: not sure what this does.
 
-=item B<5,8>
+=item C<5,8>
 
 Returns 2097152, which is 2*1024*1024. Probably the total memory size.
 
-=item B<5,9>
+=item C<5,9>
 
-Returns log memory start address (e.g. B<0>).
+Returns log memory start address (e.g. C<0>).
 
-=item B<5,10>
+=item C<5,10>
 
-Returns log memory end address (e.g. B<2072576>, which is ~2MB).
+Returns log memory end address (e.g. C<2072576>, which is ~2MB).
 
 =back
 
 =head3 Logging setup commands (group 6)
 
 Probably only positive integer values should be used as arguments to the log
-settings commands B<6,2> .. B<6,6>.
+settings commands C<6,2> .. C<6,6>.
 
 =over 10
 
-=item B<6,1,x>, B<6,1>
+=item C<6,1,x>, C<6,1>
 
 Switches logging mode to mode x or returns the currently active logging
-mode. B<x> is one of:
+mode. C<x> is one of:
 
-B<0> logging off
+C<0> logging off
 
-B<1> "course" logging: toggled by course change above a threshold when within velocity limits.
+C<1> "course" logging: toggled by course change above a threshold when within velocity limits.
 
-B<2> "velocity" logging: fixed logging intervals when within corresponding velocity limits.
+C<2> "velocity" logging: fixed logging intervals when within corresponding velocity limits.
 
-B<3> "time" logging: fixed logging time interval when within velocity limits.
+C<3> "time" logging: fixed logging time interval when within velocity limits.
 
-B<4> "distance" logging: fixed logging distance interval when within velocity limits.
+C<4> "distance" logging: fixed logging distance interval when within velocity limits.
 
-B<5> "mixed" logging: fixed logging distance and time interval when within velocity limits.
+C<5> "mixed" logging: fixed logging distance and time interval when within velocity limits.
 
 Note: this logging mode requires that "User Mode" is enabled in screen B0.
 
-=item B<6,2,v0> / B<6,2>
+=item C<6,2,v0> / C<6,2>
 
-Sets the lower velocity limit to B<v0> km/h (i.e. minimal velocity) (all
+Sets the lower velocity limit to C<v0> km/h (i.e. minimal velocity) (all
 logging modes) or returns the currently set value.
 
-=item B<6,3,v1> / B<6,3>
+=item C<6,3,v1> / C<6,3>
 
-Sets the upper velocity limit to B<v1> km/h (i.e. max. velocity) (all logging
+Sets the upper velocity limit to C<v1> km/h (i.e. max. velocity) (all logging
 modes) or returns the currently set value.
 
-=item B<6,4,c> / B<6,4>
+=item C<6,4,c> / C<6,4>
 
-Sets the course change threshold to +/- B<c> degrees ("course" logging mode) or
+Sets the course change threshold to +/- C<c> degrees ("course" logging mode) or
 returns the currently set threshold.
 
-=item B<6,5,x1>, B<6,6,x2>, B<6,7,x3> / B<6,5>, B<6,6>, B<6,7>
+=item C<6,5,x1>, C<6,6,x2>, C<6,7,x3> / C<6,5>, C<6,6>, C<6,7>
 
 Sets the velocities in km/h that subdevide the velocity interval defined by the
-lower (B<v0>) and the upper velocity limit (B<v1>) ("velocity" logging
+lower (C<v0>) and the upper velocity limit (C<v1>) ("velocity" logging
 mode). It is probably a good idea to ensure that the values meet the following
-criteria: B<v0> < B<x1> < B<x2> < B<x3> < B<v1> or returns the currently set
+criteria: C<v0> < C<x1> < C<x2> < C<x3> < C<v1> or returns the currently set
 velocities.
 
-=item B<6,9,i1>, B<6,10,i2>, B<6,11,i3>, B<6,12,i4> / B<6,9>, B<6,10>, B<6,11>, B<6,12>
+=item C<6,9,i1>, C<6,10,i2>, C<6,11,i3>, C<6,12,i4> / C<6,9>, C<6,10>, C<6,11>, C<6,12>
 
-Sets the logging intervals B<i1>, B<i2>, B<i3> and B<i4> in seconds for the
-corresponding velocity intervals [B<v0>:B<x1>], [B<x1>:B<x2>], [B<x2>:B<x3>]
-and [B<x3>:B<v1>] ("velocity" logging mode) or returns the currently set
+Sets the logging intervals C<i1>, C<i2>, C<i3> and C<i4> in seconds for the
+corresponding velocity intervals [C<v0>:C<x1>], [C<x1>:C<x2>], [C<x2>:C<x3>]
+and [C<x3>:C<v1>] ("velocity" logging mode) or returns the currently set
 intervals.
 
-=item B<6,13,t> / B<6,13>
+=item C<6,13,t> / C<6,13>
 
-Sets the logging time interval to B<t> seconds ("time" and "mixed" logging) or
+Sets the logging time interval to C<t> seconds ("time" and "mixed" logging) or
 returns the currently set interval.
 
-=item B<6,14,d> / B<6,14>
+=item C<6,14,d> / C<6,14>
 
-Sets the logging distance interval to B<d> metres ("distance" and "mixed"
+Sets the logging distance interval to C<d> metres ("distance" and "mixed"
 logging) or returns the currently set interval.
 
 =back
@@ -2239,28 +2231,28 @@ non-printable stuff.
 
 =over 10
 
-=item B<7,1>, B<7,1,name>
+=item C<7,1>, C<7,1,name>
 
-Returns the device name (e.g. B<NL-120GR>).
+Returns the device name (e.g. C<NL-120GR>).
 
-Sets the device name to B<name>. TimeMachineX (TMX) allows 19 characters
+Sets the device name to C<name>. TimeMachineX (TMX) allows 19 characters
 here. More seems to be possible but breaks compatibility with TMX. The logger
 displays 15 characters of this.
 
-=item B<7,2>, B<7,1,info>
+=item C<7,2>, C<7,1,info>
 
 Returns the device info.
 
-Sets the device info to B<info>. TimeMachineX (TMX) allows 19 characters
+Sets the device info to C<info>. TimeMachineX (TMX) allows 19 characters
 here. More seems to break compatibility with TMX. A reasonable maximum size
 might be 32.
 
-=item B<7,3>, B<7,3,sn>
+=item C<7,3>, C<7,3,sn>
 
-Returns serial number (e.g. B<SN1234567890>).
+Returns serial number (e.g. C<SN1234567890>).
 
-Sets the device serial number to B<sn>. TimeMachineX (TMX) does not allow to
-set this. A reasonable size limit might be 19 characters like B<info> and B<name>.
+Sets the device serial number to C<sn>. TimeMachineX (TMX) does not allow to
+set this. A reasonable size limit might be 19 characters like C<info> and C<name>.
 
 =back
 
@@ -2268,17 +2260,17 @@ set this. A reasonable size limit might be 19 characters like B<info> and B<name
 
 =over 10
 
-=item B<8,1>
+=item C<8,1>
 
-Returns the hardware version (e.g. B<CX01-ABC-001>).
+Returns the hardware version (e.g. C<CX01-ABC-001>).
 
-=item B<8,2>
+=item C<8,2>
 
-Returns the sofware (firmware) date (e.g. B<Nov 24 2008>).
+Returns the sofware (firmware) date (e.g. C<Nov 24 2008>).
 
-=item B<8,3>
+=item C<8,3>
 
-Returns the logging format version (e.g. B<2.0>).
+Returns the logging format version (e.g. C<2.0>).
 
 =back
 
@@ -2286,13 +2278,13 @@ Returns the logging format version (e.g. B<2.0>).
 
 =over 10
 
-=item B<9,1,x>
+=item C<9,1,x>
 
-Returns different numbers for different B<x>. FIXME: don't know what this does.
+Returns different numbers for different C<x>. FIXME: don't know what this does.
 
-=item B<9,2,x>
+=item C<9,2,x>
 
-Returns B<err_cmd>. FIXME: don't know what this does.
+Returns C<err_cmd>. FIXME: don't know what this does.
 
 =back
 
@@ -2303,22 +2295,22 @@ fine on a NL-120GR with firmware 1.1.7.0.
 
 =over 10
 
-=item B<10,1,i,lat,lon,ele,name>
+=item C<10,1,i,lat,lon,ele,name>
 
-Stores a mark with icon number B<i> (0-255), latitude/longitude B<lat>/B<lon>
-(format: %.5f, 0-90/0-180), elevation B<ele> (format: %i) and the name B<name>
+Stores a mark with icon number C<i> (0-255), latitude/longitude C<lat>/C<lon>
+(format: %.5f, 0-90/0-180), elevation C<ele> (format: %i) and the name C<name>
 (max. 12 characters). Use negative numbers for southern and western
 hemispheres, respectively.
 
-=item B<10,2,n>
+=item C<10,2,n>
 
-Reads mark B<n> (>=0) from device.
+Reads mark C<n> (>=0) from device.
 
-=item B<10,3>
+=item C<10,3>
 
 Deletes all marks from the device.
 
-=item B<10,4>
+=item C<10,4>
 
 Returns number of marks stored on the device.
 
@@ -2326,30 +2318,28 @@ Returns number of marks stored on the device.
 
 =head2 Log Data Format
 
-The binary log (as read-out with the B<5,3> command) version 2.0 (see the
-B<8,3>) consists of 16 bytes long records starting at offset 0 (i.e. no
-header). Each record holds the date and time, latitude, longitude, elevation
-(orthometric height FIXME: really?), some flags and temperature and pressure
-readings. The format is as follows:
+The binary log (as read-out with the B<5,3> command) version 2.0 (see the B<8,3>) consists of 16
+bytes long records starting at offset 0 (i.e. no header). Each record holds the date and time,
+latitude, longitude, elevation (orthometric height FIXME: really?), some flags and temperature and
+pressure readings. The format is as follows:
 
 A record consists of these fields (all little-endian):
 
-=over 4
+=over
 
-=item B<unsigned short int> (16 bits)
+=item I<unsigned short int> (16 bits)
 
-The two least significant bits are flags that determine records marked as the
-start of a new track and a waypoint, respectively.
+The two least significant bits are flags that determine records marked as the start of a new track
+and a waypoint, respectively.
 
-The next 5 bits represent the temperature reading. Multiply the value by 2 and
-substract 10 to get the temperature in degrees Celsius. The range is -10 .. +52
-degrees Celsius. FIXME: sometimes the value is unexpectedly 0, leading to -10
-in the output. We'd probably had to ignore those.
+The next 5 bits represent the temperature reading. Multiply the value by 2 and substract 10 to get
+the temperature in degrees Celsius. The range is -10 .. +52 degrees Celsius. FIXME: sometimes the
+value is unexpectedly 0, leading to -10 in the output. We should probably ignore those.
 
-The 7 most significant bits represent the pressure reading. Shift it by 589 to
-get the ambient pressure in hPa (mbar). The range is 589 .. 1100 hPa.
+The 7 most significant bits represent the pressure reading. Shift it by 589 to get the ambient
+pressure in hPa (mbar). The range is 589 .. 1100 hPa.
 
-=item B<unsigned int> (32 bits)
+=item I<unsigned int> (32 bits)
 
 The 6 least significant bits are the seconds.
 
@@ -2363,15 +2353,15 @@ The next 4 bits are the months.
 
 And the 6 most significant bits are the years since the year 2000.
 
-=item B<signed int> (32 bits)
+=item I<signed int> (32 bits)
 
 Latitude in decimal degrees scaled by 1e7.
 
-=item B<signed int> (32 bits)
+=item I<signed int> (32 bits)
 
 Longitude in decimal degrees scaled by 1e7.
 
-=item B<signed short int> (16 bits)
+=item I<signed short int> (16 bits)
 
 Elevation in metres.
 
@@ -2379,30 +2369,28 @@ Elevation in metres.
 
 =head2 Screenshots
 
-A screenshot can be requested by sending the string B<[CatchScreen]> (followed
-by a newline) to the device. The device will suspend (power off?) the GPS unit,
-which will stop NMEA output, and return a number of lines. Then the GPS unit is
-restarted and NMEA output starts again. The format of these lines is
-B<#bccrrpp> (followed by CRLF), where B<b> is the bit of the colour (1 or 2),
-B<cc> is the column (2 hex nibbles), B<rr> the row (2 hex nibbles) and B<pp>
-are the bits (pixels, 2 hex nibbles) corresponding to 8 pixels of the
-screen. The screen size of the WSG-1000 is 120x160 px. Hence, you'll see B<cc>
-from 0..15 (0x00..0x0e) and B<rr> from 0..159 (0x00..0x9f). The LSB (B<b>) of
-the colours of each group of 8 pixels (B<pp>) for all columns and rows is
-transferred first, followed by the same list for the MSB. Confusing, isn't it?
+A screenshot can be requested by sending the string C<[CatchScreen]> (followed by a newline) to the
+device. The device will suspend (power off?) the GPS unit, which will stop NMEA output, and return a
+number of lines. Then the GPS unit is restarted and NMEA output starts again. The format of these
+lines is C<#bccrrpp> (followed by CRLF), where C<b> is the bit of the colour (1 or 2), C<cc> is the
+column (2 hex nibbles), C<rr> the row (2 hex nibbles) and C<pp> are the bits (pixels, 2 hex nibbles)
+corresponding to 8 pixels of the screen. The screen size of the WSG-1000 is 120x160 px. Hence,
+you'll see C<cc> from 0..15 (0x00..0x0e) and C<rr> from 0..159 (0x00..0x9f). The LSB (C<b>) of the
+colours of each group of 8 pixels (C<pp>) for all columns and rows is transferred first, followed by
+the same list for the MSB. Confusing, isn't it?
 
 =head1 NOTES ON THE WSG-1000 / NL-120GR
 
 =head2 Log Mode
 
-Screen B0 allows for setting different log modes. Set it to "User Mode" if you
-want to use a customised logging behaviour (B<--logmode>). The "Walk", "Bike"
-and "Motor" modes are defaults for the respective activity. Setting one of
-those does not affect the stored "User Mode" logging settings.
+Screen I<B0> allows for setting different log modes. Set it to "User Mode" if you want to use a
+customised logging behaviour (C<--logmode>). The "Walk", "Bike" and "Motor" modes are defaults for
+the respective activity. Setting one of those does not affect the stored "User Mode" logging
+settings.
 
 =head1 TODO
 
-=over 8
+=over
 
 =item Implement KML export.
 
@@ -2432,7 +2420,7 @@ those does not affect the stored "User Mode" logging settings.
 
 =head1 CREDITS
 
-=over 8
+=over
 
 =item C. S. for write_gpx().
 
@@ -2442,13 +2430,13 @@ those does not affect the stored "User Mode" logging settings.
 
 =item The Perl folks (http://www.ctan.org etc.).
 
-=item The Internet.
+=item The Internets.
 
 =back
 
 =head1 LINKS
 
-=over 8
+=over
 
 =item http://www.wintec.com.tw
 
@@ -2462,28 +2450,30 @@ those does not affect the stored "User Mode" logging settings.
 
 =head1 AUTHOR
 
-Philippe Kehl <phkehl at gmx dot net>
+Philippe Kehl <phkehl at gmail dot com>
 
-http://oinkzwurgl.org/wintec
+http://oinkzwurgl.org/wintectool
+
+https://github.com/phkehl/wintectool
 
 
 =head1 COPYRIGHT AND DISCLAIMER
 
-This program is Copyright 2009 by Philippe Kehl.
+This program is Copyright 2009, 2015 by Philippe Kehl.
 
-This program is free software; you can redistribute it and/or modify it under
-the terms of the Perl Artistic License or the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
+This program is free software; you can redistribute it and/or modify it under the terms of the Perl
+Artistic License or the GNU General Public License as published by the Free Software Foundation;
+either version 2 of the License, or (at your option) any later version.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
 
-If you do not have a copy of the GNU General Public License write to the Free
-Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+If you do not have a copy of the GNU General Public License write to the Free Software Foundation,
+Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+See the included file C<LICENSE> for the full text.
 
 =cut
 
 # eof
-
