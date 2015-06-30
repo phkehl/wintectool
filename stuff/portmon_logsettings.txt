@@ -1,0 +1,105 @@
+should contain the commands to set this:
+
+1. aus
+2. kurs: 13-1705kmh, 28° --> +- 14°
+3. geschw.: 16-2969, intervalle= 16,25,50,80,2969, zeiten=3,6,8,12s
+4. zeit: 9-1660kmh, 4h27'15''
+5. distanz: 13-847kmh, 53m
+6. mix: 17-531kmh, 3h42'8'', 277m
+
+### logging off ###
+
+348: 173  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,1..
+353: 175  0.09245141  TIMEOUT  Length 11: @AL,6,1,0..
+
+
+354: 176  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,2..
+359: 178  0.09383818  TIMEOUT  Length 12: @AL,6,2,17..
+
+360: 179  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,9..
+365: 181  0.09845972  TIMEOUT  Length 11: @AL,6,9,3..
+
+366: 182  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,5..
+371: 184  0.09444636  TIMEOUT  Length 12: @AL,6,5,25..
+
+372: 185  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 10: @AL,6,10..
+377: 187  0.09102079  TIMEOUT  Length 12: @AL,6,10,6..
+
+378: 188  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,6..
+383: 190  0.09788786  TIMEOUT  Length 12: @AL,6,6,50..
+
+384: 191  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 10: @AL,6,11..
+389: 193  0.09428601  TIMEOUT  Length 12: @AL,6,11,9..
+
+390: 194  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,7..
+395: 196  0.09183150  TIMEOUT  Length 12: @AL,6,7,80..
+
+396: 197  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 10: @AL,6,12..
+401: 199  0.09526658  TIMEOUT  Length 13: @AL,6,12,12..
+
+402: 200  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,3..
+407: 202  0.09789764  TIMEOUT  Length 13: @AL,6,3,531..
+
+408: 203  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 9: @AL,6,4..
+413: 205  0.09861840  TIMEOUT  Length 12: @AL,6,4,14..
+
+414: 206  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 10: @AL,6,13..
+419: 208  0.09424913  TIMEOUT  Length 16: @AL,6,13,13328..
+
+420: 209  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 10: @AL,6,14..
+425: 211  0.09574038  TIMEOUT  Length 14: @AL,6,14,277..
+
+498: 248  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,0..
+500: 249  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 13: @AL,6,3,531..
+502: 250  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,2,17..
+507: 252  0.09567976  TIMEOUT  Length 45: @AL,6,1,0,0..@AL,6,3,531,531..@AL,6,2,17,17..
+
+
+
+### course logging ###
+1108: 553  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,4,14..
+1110: 554  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,1..
+1112: 555  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 14: @AL,6,3,1705..
+1114: 556  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,2,13..
+1119: 558  0.09622396  TIMEOUT  Length 62: @AL,6,4,14,14..@AL,6,1,1,1..@AL,6,3,1705,1705..@AL,6,2,13,13..
+
+### velocity logging ###
+1888: 943  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,9,3..
+1890: 944  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,5,25..
+1892: 945  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,10,6..
+1894: 946  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,6,50..
+1896: 947  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,11,9..
+1898: 948  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,7,80..
+1900: 949  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 13: @AL,6,12,12..
+1902: 950  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,2..
+1904: 951  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 14: @AL,6,3,2969..
+1906: 952  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,2,16..
+1911: 954  0.09936458  TIMEOUT  Length 149: @AL,6,9,3,3..@AL,6,5,25,25..@AL,6,10,6,6..@AL,6,6,50,50..@AL,6,11,9,9..@AL,6,7,80,80..@AL,6,12,12,12..@AL,6,1,2,2..@AL,6,3,2969,
+
+### time logging ###
+2992: 1495  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 16: @AL,6,13,16035..
+2994: 1496  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,3..
+2996: 1497  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 14: @AL,6,3,1660..
+2998: 1498  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,2,9..
+3003: 1500  0.09715453  TIMEOUT  Length 67: @AL,6,13,16035,16035..@AL,6,1,3,3..@AL,6,3,1660,1660..@AL,6,2,9,9..
+
+### distance logging ###
+4000: 1999  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 13: @AL,6,14,53..
+4002: 2000  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,4..
+4004: 2001  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 13: @AL,6,3,847..
+4006: 2002  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,2,13..
+4011: 2004  0.09767051  TIMEOUT  Length 61: @AL,6,14,53,53..@AL,6,1,4,4..@AL,6,3,847,847..@AL,6,2,13,13..
+
+### mixed logging ###
+5380: 2689  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 16: @AL,6,13,13328..
+5382: 2690  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 14: @AL,6,14,277..
+5384: 2691  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,5..
+5386: 2692  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 13: @AL,6,3,531..
+5388: 2693  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,2,17..
+5393: 2695  0.09988001  TIMEOUT  Length 85: @AL,6,13,13328,13328..@AL,6,14,277,277..@AL,6,1,5,5..@AL,6,3,531,531..@AL,6,2,17,17..
+
+### logging off ###
+5454: 2726  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 11: @AL,6,1,0..
+5456: 2727  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 13: @AL,6,3,531..
+5458: 2728  0.00000000  TimeMachineX.ex  IRP_MJ_WRITE  Silabser0  Length 12: @AL,6,2,17..
+5463: 2730  0.09900253  TIMEOUT  Length 45: @AL,6,1,0,0..@AL,6,3,531,531..@AL,6,2,17,17..

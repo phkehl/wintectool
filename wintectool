@@ -1,0 +1,2489 @@
+#!/usr/bin/perl
+#
+# $Id: wintectool 1627 2010-08-05 22:20:33Z flip $
+#
+# Tool for Wintec WSG-1000 a.k.a. the slightly fancier Navilock NL-120GR
+#
+# Copyright (c) 2009 Philippe Kehl <phkehl @ gmx dot net>
+#
+# This is free software.
+#
+# See the contained documentation (POD) for licensing details.
+#
+
+package main;
+
+use warnings;
+use strict;
+use DateTime;
+use Getopt::Long qw(:config bundling_override);
+use Pod::Usage;
+
+use Data::Dumper;
+$Data::Dumper::Terse = 1;
+
+
+use constant COPYMSG => "wintectool -- Wintec WGS-1000 / Navilock NL-120GR management tool\n"
+                      . "Copyright (c) 2009 Philippe Kehl <phkehl at gmx dot net> et al.\n"
+                      . '($Id: wintectool 1627 2010-08-05 22:20:33Z flip $)' . "\n";
+
+=pod
+
+=head1 NAME
+
+wintec -- script to manage a Wintec WGS-1000 (a.k.a. Navilock NL-120GR) GPS logger
+
+=cut
+
+##
+## command line options and default configuration
+##
+my %gpsopts = (
+               # serial port
+               device => '/dev/gps0',
+               baudrate => 57600,
+               parity => 'none',
+               databits => 8,
+               handshake => 'none',
+
+               # wait delay [us] for serial input and retries for serial input
+               # before timeout
+               # don't make the product of these smaller than 2 seconds
+               readdelay => 200000,
+               timeout => 10,
+
+               # maximum number of errors (retries) before panicking
+               # (when downloading logged data)
+               maxerrors => 10,
+
+               # download protocol chunk size
+               chunksize => 4096,
+
+               # record length in binary data
+               reclen => 16,
+
+               # chunk size for downloading data
+               chunksize => 4096,
+
+               # GPS timezone
+               gpstimezone => 'UTC',
+
+               # devinfo (name, info, sn) max length
+               devinfomaxlen => 19,
+              );
+
+my %opts = (
+            # verbosity (0 = quiet, 1 = normal, >=2 debugging)
+            verbosity => 2, # FIXME: set to 1 in release
+
+            # input file
+            from        => '',       # '' = download from device, else read from file
+
+            # output files
+            outfiles    => [],       # list of output files
+
+            # default output file spec
+            outsplit    => 1,        # {0|1}, create one output file per track
+            outdata     => 'tracks', # {tracks|waypoints}, what to output
+            outfilespecdefaults => {
+                     _default => ":split:tracks:wgs84llh",
+                     bin      => ":nosplit:tracks",
+                     _split   => "TYPE_YYYYMMDD-HHMI.FMT",
+                     _nosplit => "TYPE_YYYYMMDD_all.FMT",
+                       },
+
+            # timezone for output files where appropriate
+            timezone => 'Europe/Zurich',
+
+            # other stuff to do
+            _doinfo   => 0,
+            _dosetname => '',
+            _dosetinfo => '',
+            _dosetsn   => '',
+            _dologmode => undef,
+            _dodeletelog => undef,
+            _dodeletemarks => undef,
+            _dogetmarks => undef,
+            _dosetmarks => '',
+            _doscreenshot => undef,
+           );
+
+=pod
+
+=head1 SYNOPSIS
+
+wintectool [-h|--help|--man]
+
+wintectool [options]
+
+=head1 OPTIONS AND ARGUMENTS
+
+=over 8
+
+=item B<-h|--help|--man>
+
+Prints usage info, with options and arguments explained or the full manual,
+including technical documentation.
+
+=item B<--{bin|dat|gpx|kml}[=[filename][:[no]split][:{tracks|waypoints}]][:datum]>
+
+Output file specification. The filename can contain the following placeholders:
+TYPE for either "tracks" or "waypoints".
+YYYY, YY, MM, DD, HH, MI, SS for year, two-digits year, day, month, hour, minute and second of the
+track start (or first waypoint).
+N (or more 'N's for zero padded numbers) for the track number.
+FMT for the format.
+
+You can specify this flag more than once.
+
+The default output file spec is "TYPE_YYYYMMDD-HHMI.FMT:split:tracks". The
+bin format uses "TYPE_YYYYMMDD_all.FMT:nosplit:tracks" per default.
+
+The flags B<--split> (or B<--no-split>), B<--tracks> and B<--waypoints> can be
+used to override the defaults for all following output file selectors.
+
+The tracks and waypoint data is downloaded from the device unless
+B<--from=filename> is specified, which reads the data from the file B<filename>
+instead.
+
+Available (gedetic) B<:datum> option are B<:wgs84llh> and B<:swissxyz>. The
+former is the default for all output formats. The latter can only be used with
+the B<--dat> format. It implies B<--timezone=Europe/Zurich>. Note: do not set
+the datum option on the G0 screen to anything else than 'WGS84'.
+
+The B<--timezone> options can be used with B<--dat>. See the documentation for
+DateTime::TimeZone for valid arguments (e.g. "America/Chicago" or "+0630").
+
+Note: a suffix is added or increased to existing output files instead of
+overwriting it.
+
+=item B<--deletelog>
+
+Deletes all logging data. Really.
+
+Note: apparently the logger can only delete the whole memory (log and
+marks). Therefore, this command downloads the marks first, then deletes the
+memory and finally stores the marks back to the device.
+
+=item B<--info>, B<--no-info>
+
+(Do not) print some info about the device. Needs a connected GPS device.
+
+=item B<--setname>, B<--setinfo>, B<--setsn>
+
+Sets the 'name', 'info' and serial number string on the device. The 15 first
+characters of the 'name' string are visible on the device. The maximum length
+for all three strings is 19 characters each.
+
+=item B<--logmode>, B<--logmode=format>
+
+Gets and sets the current logging mode parameters. Valid formats are: "off",
+"course,v0,v1,c", "velocity,v0,x1,x2,x3,v1,i1,i2,i3,i4", "time,v0,v1,t",
+"distance,v0,v1,d" and "mixed,v0,v1,t,d". See the section "Logging setup
+commands" of the manual for details. You need to set the log mode (screen B0)
+on the device to "User Mode" for this to work.
+
+=item B<--getmarks>, B<--getmarks=filename>, B<--setmarks=filename>, B<--deletemarks>
+
+Download marks from device and, optionally, save them to a file. Read marks and
+*add* them to the list of marks on the device. Delete all marks on the
+device. The commands are executed in this order: getmarks, deletemarks,
+setmarks. The mark/file format is: icon#,lat,lon,elevation,name.
+
+=item B<--screenshot>
+
+Gets and saves a screenshot from the currently displayed screen. Optionally
+filename without extension can be specified.
+
+=item B<-v|--verbose>, B<-q|--quiet>
+
+Set or increase verbosity (0 = quiet, 1 = normal, >= 2 = debugging). B<-q>
+sets zero verbosity.
+
+=item B<-d|--device>, B<--baudrate>, B<--parity>, B<--databits>
+
+=item B<--handshake>, B<--timeout>, B<--readdelay>
+
+Set serial device to use (e.g. /dev/ttyUSB0) as well as its parameters. The
+default parameters are: 57600, none, 8, none. The last two flags set the number
+of retries to read data and delay [us] between retries (don't make the product
+of these smaller than 2 seconds).
+
+=back
+
+=cut
+
+GetOptions(
+           # handle cries for help
+           'h'    => sub { pod2usage({-verbose => 0, -exitval => 0,
+                                      -message => COPYMSG}); },
+           'help' => sub { pod2usage({-verbose => 1, -exitval => 0,
+                                      -message => COPYMSG}); },
+           'man'  => sub { pod2usage({-verbose => 2, -exitval => 0,
+                                      -message => COPYMSG}); },
+
+           # debugging
+           'v|verbose:+'    => \$opts{verbosity},
+           'q|quiet'        => sub { $opts{verbosity} = 0; },
+
+           # serial port options
+           'd|device=s'     => \$gpsopts{device},
+           'baudrate=i'     => \$gpsopts{baudrate},
+           'parity=s'       => \$gpsopts{parity},
+           'databits=i'     => \$gpsopts{databits},
+           'handshake=s'    => \$gpsopts{handshake},
+
+           # gps i/o and data format options
+           'readdelay=i'    => \$gpsopts{readdelay},
+           'timeout=i'      => \$gpsopts{timeout},
+           'maxerrors=i'    => \$gpsopts{maxerrors},
+           'chunksize=i'    => \$gpsopts{chunksize},
+           'reclen=i'       => \$gpsopts{reclen},
+
+           # data input from file instead of downloading from the device
+           'from=s'         => \$opts{from},
+
+           # output file specification flags
+           'outsplit|split!' => \$opts{outsplit},
+           'tracks'         => sub { $opts{outdata} = 'tracks'; },
+           'waypoints'      => sub { $opts{outdata} = 'waypoints'; },
+           # we need to list these all here. we cannot use aliases
+           # because $_[0]->{name} will contain the option name
+           # if an alias has been specified on the command line
+           'bin:s'          => sub { addoutputfile(@_); },
+           'dat:s'          => sub { addoutputfile(@_); },
+           'kml:s'          => sub { addoutputfile(@_); },
+           'gpx:s'          => sub { addoutputfile(@_); },
+           'timezone=s'     => \$opts{timezone},
+
+           # get/set info commands
+           'info!'          => \$opts{_doinfo},
+           'setname=s'      => \$opts{_dosetname},
+           'setinfo=s'      => \$opts{_dosetinfo},
+           'setsn=s'        => \$opts{_dosetsn},
+
+           # logmode
+           'logmode:s'      => \$opts{_dologmode},
+
+           # delete log
+           'deletelog:s'    => \$opts{_dodeletelog},
+
+           # marks (POIs)
+           'getmarks:s' => \$opts{_dogetmarks},
+           'setmarks=s' => \$opts{_dosetmarks},
+           'deletemarks:s'  => \$opts{_dodeletemarks},
+
+           # screenshot
+           'screenshot:s' => \$opts{_doscreenshot},
+
+          ) || pod2usage({-verbose => 0, -exitval => 1});
+
+# copy verbosity from program options to gps object options
+$gpsopts{verbosity} = $opts{verbosity};
+
+
+##
+## say hello
+##
+msg(COPYMSG . "\n");
+
+
+##
+## create our GPS interface object
+##
+my $gps = WintecGPS->new(\%gpsopts);
+
+
+##
+## get some info on the device
+##
+
+if ($opts{_doinfo})
+{
+    $gps->getdevinfo();
+    $gps->getverinfo();
+    $gps->getmeminfo();
+}
+
+##
+## set device info
+##
+
+$gps->setdevinfo({ name => $opts{_dosetname} }) if ($opts{_dosetname} ne '');
+$gps->setdevinfo({ info => $opts{_dosetinfo} }) if ($opts{_dosetinfo} ne '');
+$gps->setdevinfo({ sn   => $opts{_dosetsn}   }) if ($opts{_dosetsn}   ne '');
+
+##
+## get logging mode
+##
+if (defined($opts{_dologmode}))
+{
+    if ($opts{_dologmode} eq '')
+    {
+        msg("Current logmode=%s\n",
+            $gps->getlogmode());
+    }
+    else
+    {
+        $gps->setlogmode($opts{_dologmode});
+    }
+}
+
+##
+## download, decode and save log
+##
+
+# anything to output?
+if ($#{$opts{outfiles}} > -1)
+{
+    # get data from file or download from device
+    if ($opts{from} ne '')
+    {
+        $gps->read_bin($opts{from});
+    }
+    else
+    {
+        # FIXME: catch errors
+        $gps->downloadlog();
+    }
+
+    # decode data
+    $gps->decodedata();
+    # FIXME: catch errors and set $opts{_dodeletelog} = 0
+
+    # process each output file
+    foreach my $outfilespec (@{$opts{outfiles}})
+    {
+        # compose filename with list of track number(s)
+        my @filenames = ();
+        my @tracks = ();
+
+        # splitted tracks
+        if ($outfilespec->{split})
+        {
+            for (my $track = 0; $track < $gps->{tracksinfo}->{ntracks}; $track++)
+            {
+                # timestamp of first trackpoint or waypoint in this track
+                my $ts = $gps->{$outfilespec->{outdata}}->[$track]->[0]->{ts};
+                my $filename = formatfilename($outfilespec, $ts, 5);
+                push(@filenames, $filename);
+                push(@tracks, [ $track ]);
+            }
+        }
+        # unsplitted tracks
+        else
+        {
+            # timestamp of first trackpoint or waypoint in first track
+            my $ts = $gps->{$outfilespec->{outdata}}->[0]->[0]->{ts};
+            my $filename = formatfilename($outfilespec, $ts, 5);
+            push(@filenames, $filename);
+            push(@tracks, [ 0 .. $#{$gps->{$outfilespec->{outdata}}} ]);
+
+        }
+
+        # write output files
+        for (my $n = 0; $n <= $#filenames; $n++)
+        {
+            # call routine to write this format
+            if ($outfilespec->{format} eq 'bin')
+            {
+                $gps->write_bin($filenames[$n],
+                                $tracks[$n], $outfilespec->{outdata});
+            }
+            if ($outfilespec->{format} eq 'dat')
+            {
+                $gps->write_dat($filenames[$n],
+                                $tracks[$n],
+                                $outfilespec->{outdata},
+                                $outfilespec->{datum},
+                                $opts{timezone});
+            }
+			if ($outfilespec->{format} eq 'gpx')
+            {
+                $gps->write_gpx($filenames[$n],
+                                $tracks[$n],
+                                $outfilespec->{outdata});
+            }
+        }
+    }
+}
+
+
+
+##
+## delete logging memory
+##
+if (defined($opts{_dodeletelog}))
+{
+    if ($opts{_dodeletelog} eq '')
+    {
+        msg("You must use --deletelog=yes to delete the log and marks memory.\n");
+    }
+    else
+    {
+        msg("Deleting log in 4 seconds. Hit C-c NOW to abort!\n");
+        sleep(4);
+        $gps->deletelog();
+    }
+}
+
+
+
+##
+## marks
+##
+
+if (defined($opts{_dogetmarks}))
+{
+    $gps->getmarks($opts{_dogetmarks});
+}
+
+if (defined($opts{_dodeletemarks}))
+{
+    if ($opts{_dodeletemarks} eq '')
+    {
+        msg("You must use --deletemarks=yes to delete the marks.\n");
+    }
+    else
+    {
+        msg("Deleting log in 4 seconds. Hit C-c NOW to abort!\n");
+        sleep(4);
+        $gps->deletemarks();
+    }
+}
+
+if ($opts{_dosetmarks} ne '')
+{
+    $gps->setmarks($opts{_dosetmarks});
+}
+
+
+##
+## screen shot
+##
+if (defined($opts{_doscreenshot}))
+{
+    $gps->screenshot($opts{_doscreenshot});
+}
+
+
+
+##
+## say goodbye
+##
+
+$gps->restartgps();
+msg("\nAll done. Goodbye!\n");
+exit(0);
+
+
+
+
+##
+## various funky functions
+##
+
+sub msg
+{
+    printf((shift), @_) if ($opts{verbosity});
+}
+
+sub dbg
+{
+    printf( (shift), @_) if ($opts{verbosity} > (shift));
+}
+
+sub formatfilename
+{
+    my $outfilespec = shift;
+    my $timestamp = shift;
+    my $tracknum = shift;
+
+    my $filename = $outfilespec->{filename};
+
+    # format parts of the filename
+    $filename =~ s/FMT/$outfilespec->{format}/g;
+    $filename =~ s/TYPE/$outfilespec->{outdata}/g;
+
+    my $dt = DateTime->from_epoch(epoch => $timestamp, time_zone => $opts{timezone});
+    my $year  = sprintf("%04i", $dt->year());
+    my $year2 = sprintf("%02i", $dt->year()-2000);
+    my $month = sprintf("%02i", $dt->month());
+    my $day   = sprintf("%02i", $dt->day());
+    my $hour  = sprintf("%02i", $dt->hour());
+    my $min   = sprintf("%02i", $dt->minute());
+    my $sec   = sprintf("%02i", $dt->sec());
+    $filename =~ s/([^Y]+)YY([^Y]+)/$1$year2$2/g;
+    $filename =~ s/YYYY/$year/g;
+    $filename =~ s/MM/$month/g;
+    $filename =~ s/DD/$day/g;
+    $filename =~ s/HH/$hour/g;
+    $filename =~ s/MI/$min/g;
+    $filename =~ s/SS/$sec/g;
+
+    if ($filename =~ m/(N+)/)
+    {
+        $tracknum = sprintf('%0' . length($1) . 'i', $tracknum);
+        $filename =~ s/$1/$tracknum/;
+    }
+
+    return $filename;
+}
+
+sub addoutputfile
+{
+    my $format = (shift)->{name};
+    my $arg    = shift || '';
+
+    # default output specs
+    my $defspecs;
+    if ($opts{outfilespecdefaults}->{$format})
+    {
+        $defspecs = $opts{outfilespecdefaults}->{$format};
+    }
+    else
+    {
+        $defspecs = $opts{outfilespecdefaults}->{_default};
+    }
+
+    my ($split, $outname, $filename, $outdata, $datum);
+    $filename = '';
+
+    # set defaults from defspecs
+    $filename = $1 if ($defspecs =~ m/^([^:]+)/); # will be empty
+    $split    = 1  if ($defspecs =~ m/:split/);
+    $split    = 0  if ($defspecs =~ m/:nosplit/);
+    $outdata  = $1 if ($defspecs =~ m/:(waypoints|tracks)/);
+    $datum    = $1 if ($defspecs =~ m/:(wgs84llh|swissxyz)/);
+
+    # override defaults by what is specified in arg (if anything)
+    $filename = $1 if ($arg =~ m/^([^:]+)/);
+    $split    = 1  if ($arg =~ m/:split/);
+    $split    = 0  if ($arg =~ m/:nosplit/);
+    $outdata  = $1 if ($arg =~ m/:(waypoints|tracks)/);
+    $datum    = $1 if ($arg =~ m/:(wgs84llh|swissxyz)/);
+
+    # set default filename if we don't have that yet
+    $filename = $opts{outfilespecdefaults}->{_split}
+      if ($filename eq '' && $split);
+    $filename = $opts{outfilespecdefaults}->{_nosplit}
+      if ($filename eq '' && !$split);
+
+    dbg(3, "format=$format split=$split outdata=$outdata "
+        . "filename=$filename datum=$datum\n");
+
+    # add to list of file
+    my %outputfile = ( format => $format, filename => $filename,
+                       split => $split, outdata => $outdata, 
+                       datum => $datum);
+    push(@{$opts{outfiles}}, { %outputfile });
+}
+
+
+
+
+
+
+###############################################################################
+##
+## A class to handle the Wintec GPS specific stuff
+##
+###############################################################################
+
+package WintecGPS;
+
+use strict;
+use warnings;
+use Device::SerialPort;
+use Time::HiRes qw( usleep );
+use DateTime;
+use List::Util qw( sum min max );
+use File::Slurp;
+use GD;
+
+use Data::Dumper;
+$Data::Dumper::Terse = 1;
+
+# constructor, takes a hash of serial port config
+sub new
+{
+    my $class = shift;
+    my $self = {};
+
+    $self->{args} = shift;
+    $self->{io} = undef;
+    $self->{incommandmode} = 0;
+
+    bless($self, $class);
+    $self->_dbg(2, "Hello!\n");
+    return $self;
+}
+
+# prints (debug) messages
+sub _msg
+{
+    my $self = shift;
+    printf("WintecGPS: " . (shift), @_) if ($self->{args}->{verbosity});
+}
+sub _dbg
+{
+    my $self = shift;
+    printf("WintecGPS: " . (shift), @_) if ($self->{args}->{verbosity} > (shift));
+}
+
+# open serial port
+sub openserial
+{
+    my $self = shift;
+
+    # return if port already open
+    return if defined($self->{io}); # port already open
+
+    # initialise serial port object
+    $self->_dbg(2, "Opening serial port.\n");
+    $self->{io} = Device::SerialPort->new($self->{args}->{device}) ||
+      die "Failed opening port $self->{args}->{device}.";
+    $self->{io}->baudrate($self->{args}->{baudrate})               ||
+      die "Failed setting baudrate: $self->{args}->{baudrate}.";
+    $self->{io}->parity($self->{args}->{parity})                   ||
+      die "Failed setting parity: $self->{args}->{parity}.";
+    $self->{io}->databits($self->{args}->{databits})               ||
+      die "Failed setting databits: $self->{args}->{databits}.";
+    $self->{io}->handshake($self->{args}->{handshake})             ||
+      die "Failed setting handshake: $self->{args}->{handshake}.";
+    $self->{io}->write_settings()                                  ||
+      die "Failed writing serial port settings.";
+}
+
+# go into command mode
+sub gocommandmode
+{
+    my $self = shift;
+
+    # return if already in command mode
+    return if $self->{incommandmode};
+
+    $self->_dbg(1, "Going into command mode.\n");
+
+    # ensure that the serial port is opened
+    $self->openserial();
+
+    # go into command mode
+    my $retries = 4;
+    # set here because else we'll have a deep recursion
+    $self->{incommandmode} = 1;
+    while ($retries--)
+    {
+        $self->_dbg(1, "Trying again..\n") if $retries < 3;
+        my @res = $self->gpscmd(2,3);
+        if ($res[0] eq 'OK')
+        {
+            $self->{incommandmode} = 2; # confirm command mode
+            last;
+        }
+    }
+    if ($self->{incommandmode} != 2)
+    {
+        die "Unable to go into command mode!";
+    }
+}
+
+# restart GPS (i.e. leave command mode)
+sub restartgps
+{
+    my $self = shift;
+    return if !$self->{incommandmode};
+
+    $self->_dbg(1, "Restarting GPS.\n");
+
+    my @res = $self->gpscmd(2,1);
+    die "Unable to restart GPS!" if ($res[0] ne 'OK');
+
+    $self->{incommandmode} = 0;
+}
+
+# send a command to the gps and wait for reply and return payload
+# and everything before that
+sub gpscmd
+{
+    my $self = shift;
+
+    my ( $a, $b, $c );
+
+    # the command
+    if ($#_ >= 0) { $a = shift; $a = ",$a"; } else { $a = ''; }
+    if ($#_ >= 0) { $b = shift; $b = ",$b"; } else { $b = ''; }
+    if ($#_ >= 0) { $c = shift; $c = ",$c"; } else { $c = ''; }
+
+    # additional arguments to the gpsread routine
+    my $gpsreadopts;
+    if ($#_ >= 0) { $gpsreadopts = shift; } else { $gpsreadopts = {}; }
+
+    # ensure that we are in command mode
+    $self->gocommandmode();
+
+    # the command to send
+    my $cmd = "\@AL$a$b$c";
+    $self->_dbg(2, "Sending command: $cmd\n");
+
+    # drain input
+    $self->{io}->purge_rx();
+
+    # send command
+    $self->{io}->write("$cmd\n");
+
+    # get response expecting the cmd or else what the user said
+    my $expect = $cmd;
+    $expect = $gpsreadopts->{expect} if (defined($gpsreadopts->{expect}));
+    my $t = $self->gpsread($expect, $gpsreadopts);
+
+    # parse reply and return payload and everything we might
+    # have seen before the expected string
+    my $i = index($t, $expect);
+    my $payload = '';
+    my $garbage = $t;
+    if ($i >= $[)
+    {
+        $payload = substr($t, $i + length($expect) + 1);
+        $payload =~ s/\r*\n.*//g; # remove CRLN and possible garbage beyond
+        $garbage = substr($t, 0, $i); 
+    }
+    $self->_dbg(2, "Got %i bytes of garbage followed by the payload [%s]\n",
+        length($garbage), $payload);
+
+    return( ($payload, $garbage) );
+
+}
+
+# read data from gps up to expected result or until timeout
+sub gpsread
+{
+    my $self = shift;
+
+    my $expect = shift || undef;
+    my $opts;
+    if ($#_ >= 0) { $opts = shift; } else { $opts = {}; }
+
+    my $timeout = $opts->{timeout} ? $opts->{timeout} : $self->{args}->{timeout};
+
+    my $t = '';
+    while ($timeout--)
+    {
+        # wait a bit for the data
+        $self->_dbg(3, "Waiting.. got %i bytes so far, %i tries left\n",
+                  length($t), $timeout);
+
+        if ($opts->{progress})
+        {
+            $| = 1;
+            printf("\r > %i bytes.. [%i]\r", length($t), $timeout);
+        }
+
+        usleep($self->{args}->{readdelay});
+
+        # read from serial port and add to buffer
+        my $tt = $self->{io}->input();
+        $t .= $tt;
+
+        # debugging
+        if ($self->{args}->{verbosity} > 4 && $tt && $tt ne '')
+        {
+            $tt =~ s/\n/<LF>/gm;
+            $tt =~ s/\r/<CR>/gm;
+            if ($tt =~ m/[^[:print:]]+/) { $tt = "BINARY: <" . length($tt) . " bytes>"; }
+            else { $tt = "ASCII: [$tt]";  }
+            $self->_dbg(3, "Got [$tt].\n");
+        }
+
+        # leave if we found what we were looking for
+        # check that the expected data is followed by a CRLF
+        my $i = index($t, $expect);
+        if (defined($expect) && $i >= $[ && rindex($t, "\r\n") > $i)
+        {
+            $self->_dbg(3, "Got expected data: [$expect].\n");
+            $timeout = 0;
+        }
+    }
+
+    if ($opts->{progress})
+    {
+        $| = 1;
+        printf("\r                           \r");
+    }
+
+
+    # return what we have (will be '' if timeout and no data received at all)
+    return $t;
+}
+
+# get gps device info
+sub getdevinfo
+{
+    my $self = shift;
+
+    $self->_dbg(1, "Getting device info.\n");
+
+    my $name  = ($self->gpscmd(7,1))[0];
+    if ($name eq 'error_cmd')
+    {
+        $self->_msg("Warning: could not get device name!\n");
+        $name = '';
+    }
+    my $info  = ($self->gpscmd(7,2))[0];
+    if ($info eq 'error_cmd')
+    {
+        $self->_msg("Warning: could not get device info!\n");
+        $info = '';
+    }
+    my $sn    = ($self->gpscmd(7,3))[0];;
+    if ($sn eq 'error_cmd')
+    {
+        $self->_msg("Warning: could not get device serial number!\n");
+        $sn   = '';
+    }
+
+    %{$self->{devinfo}} = ( name => $name, info => $info, sn => $sn, );
+
+    $self->_dbg(1, "name=[%s] info=[%s] sn=[%s]\n",
+               $self->{devinfo}->{name}, $self->{devinfo}->{info}, $self->{devinfo}->{sn});
+
+    return($self->{devinfo});
+}
+
+# set gps device info
+sub setdevinfo
+{
+    my $self = shift;
+    my $args = shift;
+
+    # get device info if not available
+    $self->getdevinfo() if !defined($self->{devinfo});
+
+    foreach my $key (sort keys %{$args})
+    {
+        # only if valid key
+        next if ($key ne 'name' && $key ne 'info' && $key ne 'sn');
+
+        # only if not already set
+        if ($args->{$key} ne $self->{devinfo}->{$key})
+        {
+            # remove unprintable chars and commas
+            $args->{$key} =~ s/[^[:print:]]*//g;
+            $args->{$key} =~ s/,/_/g;
+
+            # truncate too long strings
+            if (length($args->{$key}) > $self->{args}->{devinfomaxlen})
+            {
+                $self->_dbg(1, "Warning: truncating too long string for '$key'.\n");
+                $args->{$key} = substr($args->{$key}, 0, $self->{args}->{devinfomaxlen});
+            }
+
+            $self->_dbg(1, "Setting devinfo '%s' to [%s] (was: [%s]).\n",
+                        $key, $args->{$key}, $self->{devinfo}->{$key});
+
+            my $b = $key eq 'name' ? 1 : $key eq 'info' ? 2 : 3;
+            my @res = $self->gpscmd(7,$b,$args->{$key});
+            if ($res[0] eq 'OK')
+            {
+                # update cached data
+                $self->{devinfo}->{$key} = $args->{$key};
+            }
+            else
+            {
+                $self->_msg("Failed setting devinfo '$key'!\n");
+            }
+        }
+    }
+    return($self->{devinfo});
+}
+
+
+# get gps version info
+sub getverinfo
+{
+    my $self = shift;
+
+    $self->_dbg(1, "Getting version info.\n");
+
+    my $hwver = ($self->gpscmd(8,1))[0];
+    if ($hwver eq 'error_cmd')
+    {
+        $self->_msg("Warning: could not get device hwver!\n");
+        $hwver = '';
+    }
+    my $swver = ($self->gpscmd(8,2))[0];
+    if ($swver eq 'error_cmd')
+    {
+        $self->_msg("Warning: could not get device swver!\n");
+        $swver = ''; 
+    }
+    my $fmt = ($self->gpscmd(8,3))[0];
+    if ($fmt eq 'error_cmd')
+    {
+        $self->_msg("Warning: could not get device fmt!\n");
+        $fmt   = '';
+    }
+
+    %{$self->{verinfo}} = ( hwver => $hwver, swver => $swver, fmt => $fmt, );
+
+    $self->_dbg(1, "hwver=[%s] swver=[%s] fmt=[%s]\n",
+               $self->{verinfo}->{hwver}, $self->{verinfo}->{swver}, $self->{verinfo}->{fmt});
+
+    return($self->{verinfo});
+}
+
+# get gps log memory info
+sub getmeminfo
+{
+    my $self = shift;
+
+    $self->_dbg(1, "Getting memory info.\n");
+
+    my $memid      = ($self->gpscmd(4,1))[0];
+    my $memstart   = ($self->gpscmd(5,9))[0];
+    my $memend     = ($self->gpscmd(5,10))[0];
+    my $memsize    = $memend-$memstart;
+    my $logstart   = ($self->gpscmd(5,1))[0];
+    my $logend     = ($self->gpscmd(5,2))[0];
+    my $logsize    = -1;
+    my $loglimit   = -1;
+    if ($logstart == 0 && $logend == 0)
+    {
+        $logsize = 0;
+    }
+    elsif ($logstart < $logend) # contigous
+    {
+        $logsize  = $logend - $logstart;
+    }
+    else # wrapped around memory end
+    {
+        $logsize  = $memend - ($logstart - $logend);
+    }
+    my $logn       = $logsize / $self->{args}->{reclen};
+    my $memfull    = $logsize / $memsize * 100;
+
+    # number of marks
+    my $nmarks = ($self->gpscmd(10,4))[0];
+
+    %{$self->{meminfo}} = (
+                           memid => $memid, memstart => $memstart,
+                           memend => $memend, memsize => $memsize,
+                           memfull => $memfull,
+                           logstart => $logstart, logend => $logend,
+                           logsize => $logsize, logn => $logn,
+                           nmarks => $nmarks,
+                          );
+
+    $self->_dbg(1, "id=0x%04x, region=0x%06x:0x%06x (%.2fMB)\n",
+                $self->{meminfo}->{memid}, $self->{meminfo}->{memstart}, $self->{meminfo}->{memend},
+                $self->{meminfo}->{memsize}/1024/1024);
+    $self->_dbg(1, "%i records \@ 0x%06x:0x%06x, %i bytes (log memory %.1f%% full)\n",
+                $self->{meminfo}->{logn}, $self->{meminfo}->{logstart}, $self->{meminfo}->{logend},
+                $self->{meminfo}->{logsize}, $self->{meminfo}->{memfull});
+    $self->_dbg(1, "%i marks stored on device\n", $self->{meminfo}->{nmarks});
+
+    return($self->{meminfo});
+}
+
+
+# download log from gps
+sub downloadlog
+{
+    my $self = shift;
+
+    # get memory info if not cached
+    $self->getmeminfo() if !defined($self->{meminfo});
+
+    $self->_dbg(1, "Downloading log.\n");
+
+    # check if there is anything at all
+    my $logsize = $self->{meminfo}->{logsize};
+    if ($logsize <= 0)
+    {
+        $self->_dbg(1, "Log is empty. Nothing to download.\n");
+        return 0;
+    }
+    my $nchunks = int( ($logsize / $self->{args}->{chunksize}) + 0.99999 );
+
+    # download data
+    my $chunks = 1;
+    my $maxerrors = $self->{args}->{maxerrors};
+    my $rawdata = '';
+    my $logread = $self->{meminfo}->{logstart}; # current read address
+    # the read operation takes longer than other operations, increase
+    # the number of retries to read the whole chunk
+    my $timeout = $self->{args}->{timeout} * 4;
+    while ($logsize > 0 && $maxerrors > 0)
+    {
+        $self->_dbg(1, "Reading chunk %03i/%03i @ 0x%06x (%i bytes left)\n",
+                   $chunks, $nchunks, $logread, $logsize);
+
+        # poll a chunk of data at address
+        my $chunksize = min( ($self->{args}->{chunksize}, $logsize ) );
+        my @res = $self->gpscmd(5,3,$logread,
+                              { expect => '@AL,CS', timeout => $timeout,
+                                progress => 1, });
+
+        # retry if we didn't get anything
+        if ($res[1] eq '')
+        {
+            $maxerrors--;
+            $self->_dbg(1, "No data while trying to read chunk. "
+                        . "%i retries left.\n", $maxerrors);
+            next;
+        }
+
+        # retry if we didn't get enough data
+        my $payloadlen = length($res[1]);
+        if ($payloadlen != $chunksize)
+        {
+            $self->_dbg(1, "Not enough data while trying to read chunk "
+                        . "(%i < %i). %i retries left.\n",
+                        $payloadlen, $chunksize, $maxerrors);
+            next;
+        }
+
+        # extract, calculate and compare checksum and address
+        my $plcs = -1;
+        my $addr = -1;
+        if ($res[0] =~ m/^([^,]{1,2}),([0-9]{1,10})/)
+        {
+            $plcs = hex($1);
+            $addr = $2;
+        }
+        my $cs = 0x00;
+        foreach (split(//m, $res[1])) { $cs ^= ord($_); }
+        if ($cs != $plcs || $addr != $logread)
+        {
+            $maxerrors--;
+            $self->_dbg(1, "Checksum and/or address error (0x%02x != 0x%02x, "
+                        . "0x%06x != 0x%06x). %i retries left.\n",
+                        $cs, $plcs, $addr, $logread, $maxerrors);
+            next;
+        }
+
+        # store data and prepare to get the next chunk
+        $self->_dbg(2, "$payloadlen bytes OK\n");
+        $rawdata .= $res[1];
+
+        # advance read pointer and decrease number of bytes still to read
+        # handle log memory wrapped around memory end
+        $logsize -= $payloadlen;
+        $logread += $payloadlen;
+        if ($logread >= $self->{meminfo}->{memend})
+        {
+            $logread = $self->{meminfo}->{memstart};
+        }
+        $chunks++;
+
+    }
+
+    # return error if failed
+    if ($maxerrors <= 0)
+    {
+        die "Too many errors and/or timeouts!";
+    }
+
+    # store raw data
+    $self->{rawdata} = $rawdata;
+    $self->_dbg(1, "Got %i bytes.\n", length($self->{rawdata}));
+
+    # FIXME: save TK1 header stuff here somewhere (for write_bin())
+
+    return(length($self->{rawdata}));
+}
+
+# delete log and marks memory
+sub deletelog
+{
+    my $self = shift;
+
+    # delete log memory (and marks memory)
+    $self->_dbg(1, "Deleting log memory.\n");
+    # can take longer..
+    my $timeout = $self->{args}->{timeout} * 4;
+    my @res = $self->gpscmd(5,4,'', { timeout => $timeout });
+
+    return $res[0];
+}
+
+# decode data
+sub decodedata
+{
+    my $self = shift;
+
+    # assert that we have some data
+    if (!defined($self->{rawdata}))
+    {
+        $self->_dbg(1, "Nothing to decode!\n");
+        return undef;
+    }
+
+    # FIXME: we should check this (see FIXME in write_bin())
+    ## get version info if not cached
+    #$self->getverinfo() if (!defined($self->{verinfo}));
+    #
+    ## assert that we can handle this data
+    #if ($self->{verinfo}->{fmt} != 2)
+    #{
+    #    $self->_dbg(1, "Can only decode version 2 format.\n");
+    #    return undef;
+    #}
+
+    $self->_dbg(1, "Decoding raw data.\n");
+
+    # initialise data structures
+    # these are arrays of tracks/waypoints, which are arrays of records or,
+    # in case of raw data, strings with the binary data
+    $self->{tracks} = ();
+    $self->{waypoints} = ();
+    $self->{tracksraw} = ();
+    $self->{waypointsraw} = ();
+
+    # FIXME: maybe we should delete() previously decoded data here or check
+    # that it is not already decoded. (should not be a problem usually)
+
+    # decode
+    my $datalen = length($self->{rawdata});
+    my $datapos = 0;
+    my $ntracks = -1;
+    my $nrecords = -1;
+    my $dt_gps = DateTime->now(time_zone => $self->{args}->{gpstimezone});
+    while ($datapos < $datalen)
+    {
+        # break up binary record into an array of values
+        my $raw = substr($self->{rawdata}, $datapos, $self->{args}->{reclen});
+        my @v = unpack('S<L<l<l<s<', $raw);
+
+        # decode values
+        my $flags  = $v[0] & 0x03;                   # 2 bits
+        my $temp   = (($v[0] >> 2) & 0x1f) * 2 - 10; # 5 bits
+        my $pres   = (($v[0] >> 7) & 0x1ff) + 589;   # 9 bits
+
+        my $second = ($v[1] >>  0) & 0x3f;           # 6 bits
+        my $minute = ($v[1] >>  6) & 0x3f;           # 6 bits
+        my $hour   = ($v[1] >> 12) & 0x1f;           # 5 bits
+        my $day    = ($v[1] >> 17) & 0x1f;           # 6 bits
+        my $month  = ($v[1] >> 22) & 0x0f;           # 4 bits
+        my $year   =(($v[1] >> 26) & 0x3f) + 2000;   # 6 bits
+
+        my $lat   = $v[2] / 1e7;                     # 32 bits unsigned
+
+        my $lon   = $v[3] / 1e7;                     # 32 bits unsigned
+
+        my $ele   = $v[4];                           # 16 bits unsigned
+
+        # create posix timestamp from date/time
+        $dt_gps->set(second => $second, minute => $minute, hour => $hour,
+                     day => $day, month => $month, year => $year);
+        my $ts = $dt_gps->epoch();
+
+        # compose record
+        my %record = (
+                      ts => $ts, flags => $flags,
+                      lat => $lat, lon => $lon, ele => $ele,
+                      temp => $temp, pres => $pres
+                     );
+        $nrecords++;
+
+        my $dbgtmp = "$ts ($day.$month.$year $hour:$minute:$second) / "
+          . "$lat $lon $ele / $temp $pres / $flags";
+        $self->_dbg(4, "$dbgtmp\n");
+
+        # new track (always if first record)
+        if ($flags & 0x01 || ($ntracks < 0 && $nrecords == 0))
+        {
+            $ntracks++;
+            $nrecords = 0;
+            $self->_dbg(2, "New track #%i\n", $ntracks+1);
+        }
+
+        # store waypoints
+        if ($flags & 0x02)
+        {
+            #$self->_dbg(3, "WAYPOINT: $dbgtmp\n");
+            push(@{$self->{waypoints}->[$ntracks]}, {%record});
+            $self->{waypointsraw}->[$ntracks] .= $raw;
+        }
+
+        # store track data
+        push(@{$self->{tracks}->[$ntracks]}, {%record});
+        $self->{tracksraw}->[$ntracks] .= $raw;
+
+        # next record
+        $datapos += $self->{args}->{reclen};
+    }
+
+    # count number of records, waypoints and tracks and find bounds/extents
+    $ntracks = $#{$self->{tracks}} + 1;
+    my @nwaypoints;
+    my @nrecords;
+    my @bounds; # extent per track
+    my @extent = ( +90, -90, +180, -180 ); # of all tracks
+    for (my $i = 0; $i < $ntracks; $i++)
+    {
+
+        # bounds (extent) for this track
+        my @bound = ( +90, -90, +180, -180 );
+        for (my $j = 0; $j < $#{$self->{tracks}->[$i]}+1; $j++)
+        {
+            $bound[0] = min($self->{tracks}->[$i]->[$j]->{lat}, $bound[0]);
+            $bound[1] = max($self->{tracks}->[$i]->[$j]->{lat}, $bound[1]);
+            $bound[2] = min($self->{tracks}->[$i]->[$j]->{lon}, $bound[2]);
+            $bound[3] = max($self->{tracks}->[$i]->[$j]->{lon}, $bound[3]);
+        }
+        push(@bounds, [@bound]);
+        $self->_dbg(2, "Bounds of track #%i: %f %f %f %f\n", $i+1,
+                    $bound[0], $bound[1], $bound[2], $bound[3]);
+
+        # update total extent
+        $extent[0] = min($bound[0], $extent[0]);
+        $extent[1] = max($bound[1], $extent[1]);
+        $extent[2] = min($bound[2], $extent[2]);
+        $extent[3] = max($bound[3], $extent[3]);
+
+        # keep a list of the number of points in each track
+        push(@nwaypoints, $#{$self->{waypoints}->[$i]}+1);
+        push(@nrecords, $#{$self->{tracks}->[$i]}+1);
+    }
+    $self->_dbg(2, "Total extent: %f %f %f %f\n",
+                $extent[0], $extent[1], $extent[2], $extent[3]);
+
+    # store metadata
+    $self->{tracksinfo} = { ntracks => $ntracks,
+                            nwaypoints => [@nwaypoints],
+                            nrecords => [@nrecords],
+                            bounds => [@bounds],
+                            extent => [@extent]};
+
+    $self->_dbg(1, "Got %i tracks with %s (=%i) records and %s (=%i) waypoints.\n",
+                $ntracks,
+                join("+", @{$self->{tracksinfo}->{nrecords}}),
+                sum(@{$self->{tracksinfo}->{nrecords}}),
+                join("+", @{$self->{tracksinfo}->{nwaypoints}}),
+                sum(@{$self->{tracksinfo}->{nwaypoints}}));
+
+    return ($self->{tracksinfo});
+}
+
+# get marks from device
+sub getmarks
+{
+    my $self = shift;
+    my $outputfile = shift || '';
+
+
+    if (defined($self->{marks}))
+    {
+        $self->_dbg(1, "Marks already downloaded.\n");
+        return;
+    }
+
+    my $outputdata = "# icon,lat,lon,ele,name\n";
+    my $nmarks = ($self->gpscmd(10,4))[0];
+
+    if ($nmarks == 0)
+    {
+        $self->_dbg(1, "No marks stored on the device.\n");
+    }
+    else
+    {
+        $self->_dbg(1, "Retrieving %i marks stored on the device.\n", $nmarks);
+        for (my $n = 0; $n < $nmarks; $n++)
+        {
+            my @res = $self->gpscmd(10,2,$n);
+            #$self->_dbg(1, "mark #%02i: %s\n", $n+1, $res[0]);
+            if ($res[0] =~ m/^([0-9]+),([0-9]+),([-0-9]+\.[0-9]+),([-0-9]+\.[0-9]+),([0-9]+),([^,]+)$/
+               && $1 == $n)
+            {
+                my $icon = $2;
+                my $lat = $3;
+                my $lon = $4;
+                my $ele = $5;
+                my $name = $6;
+                my %mark = ( icon => $icon, lat => $lat, lon => $lon,
+                             ele => $ele, name => $name, );
+
+                $outputdata .= "$icon,$lat,$lon,$ele,$name\n";
+                $self->_dbg(1, "icon=%3i lat=%9.5f lon=%10.5f ele=%i name=%s\n",
+                            $icon, $lat, $lon, $ele, $name);
+
+                push(@{$self->{marks}}, { %mark });
+            }
+            else
+            {
+                $self->_dbg(1, "Cannot parse mark #%02i: %s\n", $n+1, $res[0]);
+            }
+            # sleeping a bit here seems to help
+            usleep(200000);
+        }
+
+        # save marks to file if requested
+        if ($outputfile ne '')
+        {
+            $outputfile = $self->makefilename($outputfile);
+            $self->_dbg(1, "Saving marks to file %s.\n", $outputfile);
+            write_file($outputfile, $outputdata);
+        }
+    }
+}
+
+# set marks on device
+sub setmarks
+{
+    my $self = shift;
+    my $inputfile = shift || die "Need filename.";
+
+    my @marks;
+
+    $self->gocommandmode();
+
+    # process previously downloaded marks if magic filename is used
+    if ($inputfile eq '*')
+    {
+        die "No marks!" if (!defined($self->{marks}));
+        foreach my $mark (@{$self->{marks}})
+        {
+            push(@marks, sprintf("%i,%.5f,%.5f,%i,%s",
+                                 $mark->{icon}, $mark->{lat}, $mark->{lon},
+                                 $mark->{ele}, $mark->{name}));
+        }
+    }
+    else
+    {
+        @marks = split(/\r*\n/, read_file($inputfile));
+        # FIXME: catch errors
+    }
+
+    if ($#marks == -1)
+    {
+        $self->_dbg(1, "No marks data available!\n");
+        return;
+    }
+
+    my $line = 0;
+    foreach my $mark (@marks)
+    {
+        $line++;
+        # skip comments and empty lines
+        next if ($mark =~ m/^#|^$/);
+
+        # check format and store mark
+        if ($mark =~ m/^([0-9]+),([-0-9]+\.[0-9]+),([-0-9]+\.[0-9]+),([0-9]+),([^,]+)$/
+            && $1 >= 0 && $1 < 256
+            && $2 >= -90 && $2 <= 90
+            && $3 >= -180 && $3 <= 180
+            && $4 >= 0 && $4 <= 20000) # FIXME: min/max height?
+        {
+            my $icon = $1;
+            my $lat = $2;
+            my $lon = $3;
+            my $ele = $4;
+            my $name = $5;
+            my $cmd = sprintf("%i,%.5f,%.5f,%i,%s",
+                              $1, $2, $3, $4, substr($5, 0, 12));
+            $self->_dbg(1, "Storing mark: %s\n", $cmd);
+            $self->gpscmd(10,1,$cmd);
+            usleep(200000);
+        }
+        else
+        {
+            $self->_dbg(1, "Badly formatted line #%i in %s: %s\n",
+                        $line, $inputfile, $mark);
+        }
+    }
+}
+
+# delete marks from device
+sub deletemarks
+{
+    my $self = shift;
+    $self->_dbg(1, "Deleting marks stored on the device.\n");
+    return ($self->gpscmd(10,3))[0]
+}
+
+# write binary dump of the data
+sub write_bin
+{
+    my $self = shift;
+    my $filename = shift || die "Need filename!";
+    my $tracks   = shift || die "Need reference to list of tracks!";
+    my $outdata  = shift || die "Need to know what data to save!";
+
+    # add or increment suffix to filename if file exists
+    $filename = $self->makefilename($filename);
+
+    # FIXME: store TK1 header with data format version etc.
+    $self->_dbg(1, "Saving binary %s data for tracks %s to %s.\n",
+                $outdata,
+                join(", ", map { $_ + 1 } @{$tracks}), $filename);
+
+    # save track(s) to file
+    foreach my $track (@{$tracks})
+    {
+        # skip if we do not have data for this track
+        if (!defined($self->{$outdata."raw"}->[$track]))
+        {
+            $self->_dbg(1, "No data for track #%i, nothing to save.\n", $track+1);
+            next;
+        }
+
+        $self->_dbg(2, "Appending binary data for track #%i to %s.\n",
+                    $track+1, $filename);
+
+        # append to file
+        write_file($filename, { binmode => ':raw', append => 1 },
+                   $self->{$outdata."raw"}->[$track]);
+    }
+}
+
+# load binary data from file
+sub read_bin
+{
+    my $self = shift;
+    my $filename = shift || die "Need filename!";
+
+    $self->_dbg(1, "Reading raw data from file %s.\n", $filename);
+
+    # FIXME: we must decode the TK1 header here once write_bin() saves it
+    # and do some checks..
+    my $rawdata = read_file($filename, { binmode => ':raw' });
+
+    $self->{rawdata} = $rawdata;
+    $self->_dbg(1, "Got %i bytes.\n", length($self->{rawdata}));
+}
+
+# write ASCII
+sub write_dat
+{
+    my $self = shift;
+    my $filename = shift || die "Need filename!";
+    my $tracks   = shift || die "Need reference to list of tracks!";
+    my $outdata  = shift || die "Need to know what data to save!";
+    my $datum    = shift || die "Need to know which datum to use!";
+    my $timezone = shift || 'UTC';
+
+    # add or increment suffix to filename if file exists
+    $filename = $self->makefilename($filename);
+
+    $self->_dbg(1, "Saving ASCII %s data for tracks %s to %s.\n",
+                $outdata,
+                join(", ", map { $_ + 1 } @{$tracks}), $filename);
+
+    # switch to Swiss timezone if user selected swissxyz
+    $timezone = 'Europe/Zurich' if ($datum eq 'swissxyz');
+
+    # write header
+    my $header = '';
+    $header = '# x y z'       if ($datum eq 'swissxyz');
+    $header = '# lat lon ele' if ($datum eq 'wgs84llh');
+    $header .= " unix_timestamp date time temp pres (flags)\n";
+    write_file($filename, { binmode => ':raw', append => 1 }, $header);
+
+    # save track(s) to file
+    foreach my $track (@{$tracks})
+    {
+        # skip if we do not have data for this track
+        if (!defined($self->{$outdata."raw"}->[$track]))
+        {
+            $self->_dbg(1, "No data for track #%i, nothing to save.\n", $track+1);
+            next;
+        }
+
+        $self->_dbg(2, "Appending ASCII track data for track #%i to %s.\n",
+                    $track+1, $filename);
+
+        my $trackdata = '';
+        my $rec;
+
+        for (my $i = 0; $i < $#{$self->{$outdata}->[$track]}; $i++)
+        {
+            $rec = $self->{$outdata}->[$track]->[$i];
+            my $dt = DateTime->from_epoch(epoch => $rec->{ts},
+                                          time_zone => $opts{timezone});
+            if ($datum eq 'wgs84llh')
+            {
+                $trackdata .= sprintf("%11.7f %11.7f %5i",
+                                      $rec->{lat}, $rec->{lon}, $rec->{ele});
+            }
+            elsif ($datum eq 'swissxyz')
+            {
+                my @llh = ($rec->{lat}, $rec->{lon}, $rec->{ele});
+                my @xyz = $self->llh2xyz_swiss(\@llh);
+                # we have approx. 0.011m precision (%.7f in lat/lon data)
+                $trackdata .= sprintf("%9.2f %9.2f %5i",
+                                      $xyz[0], $xyz[1], $xyz[2]);
+            }
+            $trackdata .= sprintf(" %i %s %s %3i %4i %s\n",
+                                  $rec->{ts}, $dt->dmy('.'), $dt->hms(':'),
+                                  $rec->{temp}, $rec->{pres},
+                                  ($rec->{flags} & 0x02 ? ' WAYPOINT' : ''));
+        }
+        # add GNUplot style dataset separator
+        $trackdata .= "\n\n";
+
+        # append data to file
+        write_file($filename, { append => 1 }, $trackdata);
+    }
+}
+
+# write KML format
+sub write_kml
+{
+    my $self = shift;
+    my $filename = shift || die "Need filename!";
+    my $tracks   = shift || die "Need reference to list of tracks!";
+    my $outdata  = shift || die "Need to know what data to save!";
+
+    $self->_dbg(1, "Saving KML format is *** NOT IMPLEMENTED ***.\n");
+}
+
+# write GPX format
+sub write_gpx
+{
+    my $self = shift;
+    my $filename = shift || die "Need filename!";
+    my $tracks   = shift || die "Need reference to list of tracks!";
+    my $outdata  = shift || die "Need to know what data to save!";
+
+	# add or increment suffix to filename if file exists
+    $filename = $self->makefilename($filename);
+
+    $self->_dbg(1, "Saving GPX %s data for tracks %s to %s.\n",
+                $outdata,
+                join(", ", map { $_ + 1 } @{$tracks}), $filename);
+
+	# write header
+	my $header = '<?xml version="1.0" encoding="UTF-8"?>' ." \n"
+      . '<gpx version="1.1" creator="wintectool - http://oinkzwurgl.org/wintectool"' ." \n"
+      . '     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' ." \n"
+      . '     xmlns="http://www.topografix.com/GPX/1/1"' ." \n"
+      . '     xsi:schemaLocation="http://www.topografix.com/GPX/1/1' ." \n"
+      . '                         http://www.topografix.com/GPX/1/1/gpx.xsd' ." \n"
+      . '                         http://www.topografix.com/GPX/gpx_overlay/0/3' ." \n"
+      . '                         http://www.topografix.com/GPX/gpx_overlay/0/3/gpx_overlay.xsd' ." \n"
+      . '                         http://www.topografix.com/GPX/gpx_modified/0/1' ." \n"
+      . '                         http://www.topografix.com/GPX/gpx_modified/0/1/gpx_modified.xsd">' ." \n";
+
+	# write bounds
+    $header .= "  <metadata>\n"
+      . sprintf('    <bounds minlat="%.6f" maxlat="%.6f" minlon="%.6f" maxlon="%.6f"/>',
+                $self->{tracksinfo}->{extent}->[0], $self->{tracksinfo}->{extent}->[1],
+                $self->{tracksinfo}->{extent}->[2], $self->{tracksinfo}->{extent}->[3]) . "\n"
+      . '  </metadata>' . "\n";
+	write_file($filename, { append => 1 }, $header);
+
+
+	# write all tracks
+	my $trackNum = 1;
+	foreach my $track (@{$tracks})
+    {
+        # skip if we do not have data for this track
+        if (!defined($self->{$outdata."raw"}->[$track]))
+        {
+            $self->_dbg(1, "No data for track #%i, nothing to save.\n", $track+1);
+            next;
+        }
+
+        $self->_dbg(2, "Appending GPX track data for track #%i to %s.\n",
+                    $track+1, $filename);
+
+		# open track
+        my $trackdata = '  <trk>' . "\n"
+          . '    <name>Track #' . $trackNum . '</name>' . "\n"
+          . '    <trkseg>' . "\n";
+        # FIXME: TODO: add desc
+
+		# write all track points
+		for (my $i = 0; $i < $#{$self->{$outdata}->[$track]}; $i++)
+        {
+			my $rec = $self->{$outdata}->[$track]->[$i];
+
+            # open the waypoint or track point
+            $trackdata .= '      <' . ($rec->{flags} & 0x02 ? 'wpt' : 'trkpt')
+              . ' lat="' . $rec->{lat} . '" lon="' . $rec->{lon} . '">';
+
+            # add elevation
+            $trackdata .= '<ele>' . $rec->{ele} . '</ele>';
+
+            # write the time in SOAP xsd format
+            my $dt = DateTime->from_epoch(epoch => $rec->{ts}, time_zone => 'UTC');
+            $trackdata .= '<time>' . $dt->ymd('-') . 'T' . $dt->hms(':') . "Z</time>";
+
+			# FIXME: TODO: write extensions for trkpt
+
+            # close the waypoint or trackpoint
+            $trackdata .= '</'. ($rec->{flags} & 0x02 ? 'wpt' : 'trkpt') . ">\n";
+
+		}
+
+		# close the track
+        $trackdata .= "    </trkseg>\n";
+        $trackdata .= "  </trk>\n";
+
+		$trackNum++;
+        # flush data to file
+        write_file($filename, { append => 1 }, $trackdata);
+	}
+
+	# close the gpx tag
+	write_file($filename, { append => 1 }, "</gpx>\n");
+}
+
+
+# logging modes (by name and by index)
+use constant LOGMODESNAMES => { off => 0, course => 1, velocity => 2,
+                                time => 3, distance => 4, mixed => 5, };
+use constant LOGMODESINDEX => qw(off course velocity time distance mixed);
+
+# gets log mode information
+sub getlogmode
+{
+    my $self = shift;
+
+    # read all logging mode parameters
+    $self->_dbg(1, "Getting logging mode.\n");
+    # FIXME: add error checking (test for timeouts)
+    my $m  = ($self->gpscmd(6,1))[0];
+    my $mode = (LOGMODESINDEX)[$m];
+    my $v0 = ($self->gpscmd(6,2))[0];
+    my $v1 = ($self->gpscmd(6,3))[0];
+    my $c  = ($self->gpscmd(6,4))[0];
+    my $x1 = ($self->gpscmd(6,5))[0];
+    my $x2 = ($self->gpscmd(6,6))[0];
+    my $x3 = ($self->gpscmd(6,7))[0];
+    my $i1 = ($self->gpscmd(6,9))[0];
+    my $i2 = ($self->gpscmd(6,10))[0];
+    my $i3 = ($self->gpscmd(6,11))[0];
+    my $i4 = ($self->gpscmd(6,12))[0];
+    my $t  = ($self->gpscmd(6,13))[0];
+    my $d  = ($self->gpscmd(6,14))[0];
+
+    %{$self->{logmode}} = (
+                           m => $m, mode => $mode,
+                           v0 => $v0, v1 => $v1,
+                           c => $c,
+                           x1 => $x1, x2 => $x2, x3 => $x3,
+                           i1 => $i1, i2 => $i2, i3 => $i3, i4 => $i4,
+                           t => $t, d => $d,
+                          );
+
+    $self->_dbg(1, "m=%i mode=%s v0=%i v1=%i c=%i x1=%i x2=%i x3=%i "
+                . "i1=%i i2=%i i3=%i i4=%i t=%i d=%i\n",
+                $self->{logmode}->{m}, $self->{logmode}->{mode},
+                $self->{logmode}->{v0}, $self->{logmode}->{v1}, $self->{logmode}->{c},
+                $self->{logmode}->{x1}, $self->{logmode}->{x2}, $self->{logmode}->{x3},
+                $self->{logmode}->{i1}, $self->{logmode}->{i2}, $self->{logmode}->{i3}, 
+                $self->{logmode}->{i4}, $self->{logmode}->{t}, $self->{logmode}->{d}); 
+
+    if    ($m == 0) { return 'off'; }
+    elsif ($m == 1) { return "course,$v0,$v1,$c"; }
+    elsif ($m == 2) { return "velocity,$v0,$x1,$x2,$x3,$v1,$i1,$i2,$i3,$i4"; }
+    elsif ($m == 3) { return "time,$v0,$v1,$t"; }
+    elsif ($m == 4) { return "distance,$v0,$v1,$d"; }
+    elsif ($m == 5) { return "mixed,$v0,$v1,$t,$d"; }
+    else            { return "unknown"; }
+}
+
+sub setlogmode
+{
+    my $self = shift;
+    my $logmode = shift || die "Need logmode string.";
+
+    my @cmds;
+
+    # handle log modes
+    if ($logmode =~ /^(off)$/)
+    {
+        my $mode = $1; my $m = (LOGMODESNAMES)->{$mode};
+        $self->_dbg(1, "Setting logmode '%s': m=%i\n", $mode, $m);
+        push(@cmds, [ 6, 1, $m ]);
+    }
+    elsif ($logmode =~ /^(course),([0-9]+),([0-9]+),([0-9]+)$/
+          && $2 < $3 && $4 > 0 && $4 < 180)
+    {
+        my $v0 = int($2); my $v1 = int($3);
+        my $c = int($4);
+        my $mode = $1; my $m = (LOGMODESNAMES)->{$mode};
+        $self->_dbg(1, "Setting logmode '%s': m=%i v0=%i v1=%i c=%i\n",
+                    $mode, $m, $v0, $v1, $c);
+        push(@cmds, [ 6, 2, $v0 ]);
+        push(@cmds, [ 6, 3, $v1 ]);
+        push(@cmds, [ 6, 4, $c  ]);
+        push(@cmds, [ 6, 1, $m  ]);
+    }
+    elsif ($logmode =~ /^(velocity),([0-9]+),([0-9]+),([0-9]+),([0-9]+),([0-9]+),
+                        ([0-9]+),([0-9]+),([0-9]+),([0-9]+)$/x
+           && $2 < $3 && $3 < $4 && $4 < $5 && $5 < $6
+           && $7 > 0 && $8 > 0 && $9 > 0 && $10 > 0)
+    {
+        my $v0 = int($2); my $v1 = int($6);
+        my $x1 = int($3); my $x2 = int($4); my $x3 = int($5);
+        my $i1 = int($7); my $i2 = int($8); my $i3 = int($9); my $i4 = int($10);
+        my $mode = $1; my $m = (LOGMODESNAMES)->{$mode};
+        $self->_dbg(1, "Setting logmode '%s': m=%i v0=%i x1=%i x2=%i x3=%i v1=%i "
+                    . "i1=%i i2=%i i3=%i i4=%i\n",
+                    $mode, $m, $v0, $x1, $x2, $x3, $v1, $i1, $i2, $i3, $i4);
+        push(@cmds, [ 6, 2, $v0 ]);
+        push(@cmds, [ 6, 3, $v1 ]);
+        push(@cmds, [ 6, 5, $x1 ]);
+        push(@cmds, [ 6, 6, $x2 ]);
+        push(@cmds, [ 6, 7, $x3 ]);
+        push(@cmds, [ 6, 9, $i1 ]);
+        push(@cmds, [ 6,10, $i2 ]);
+        push(@cmds, [ 6,11, $i3 ]);
+        push(@cmds, [ 6,12, $i4 ]);
+        push(@cmds, [ 6, 1, $m  ]);
+    }
+    elsif ($logmode =~ /^(time),([0-9]+),([0-9]+),([0-9]+)$/
+          && $2 < $3 && $4 > 0)
+    {
+        my $v0 = int($2); my $v1 = int($3);
+        my $t = int($4);
+        my $mode = $1; my $m = (LOGMODESNAMES)->{$mode};
+        $self->_dbg(1, "Setting logmode '%s': m=%i v0=%i v1=%i t=%i\n",
+                    $mode, $m, $v0, $v1, $t);
+        push(@cmds, [ 6, 2, $v0 ]);
+        push(@cmds, [ 6, 3, $v1 ]);
+        push(@cmds, [ 6,13, $t  ]);
+        push(@cmds, [ 6, 1, $m  ]);
+    }
+    elsif ($logmode =~ /^(distance),([0-9]+),([0-9]+),([0-9]+)$/
+          && $2 < $3 && $4 > 0)
+    {
+        my $v0 = int($2); my $v1 = int($3);
+        my $d = int($4);
+        my $mode = $1; my $m = (LOGMODESNAMES)->{$mode};
+        $self->_dbg(1, "Setting logmode '%s': m=%i v0=%i v1=%i d=%i\n",
+                    $mode, $m, $v0, $v1, $d);
+        push(@cmds, [ 6, 1, $m  ]);
+        push(@cmds, [ 6, 2, $v0 ]);
+        push(@cmds, [ 6, 3, $v1 ]);
+        push(@cmds, [ 6,14, $d  ]);
+        push(@cmds, [ 6, 1, $m  ]);
+    }
+    elsif ($logmode =~ /^(mixed),([0-9]+),([0-9]+),([0-9]+),([0-9]+)$/
+          && $2 < $3 && $4 > 0 && $5 > 0)
+    {
+        my $v0 = int($2); my $v1 = int($3);
+        my $t = int($4); my $d = int($5);
+        my $mode = $1; my $m = (LOGMODESNAMES)->{$mode};
+        $self->_dbg(1, "Setting logmode '%s': m=%i v0=%i v1=%i t=%i d=%i\n",
+                    $mode, $m, $v0, $v1, $t, $d);
+        push(@cmds, [ 6, 2, $v0 ]);
+        push(@cmds, [ 6, 3, $v1 ]);
+        push(@cmds, [ 6,13, $t  ]);
+        push(@cmds, [ 6,14, $d  ]);
+        push(@cmds, [ 6, 1, $m  ]);
+    }
+    else
+    {
+        $self->_dbg(1, "Illegal logmode specification.\n");
+        return undef;
+    }
+
+    # set commands
+    foreach my $c (@cmds)
+    {
+        my @res = $self->gpscmd($c->[0], $c->[1], $c->[2]);
+        if ($res[0] != $c->[2])
+        {
+            $self->_dbg(1, "Error setting logmode parameter %i: %i.\n",
+                        $c->[1], $res[0]);
+            return undef;
+        }
+    }
+
+    $self->_dbg(1, "Log mode set.\n");
+    return 0;
+}
+
+# adds or increments suffix if file already exists
+sub makefilename
+{
+    my $self = shift;
+    my $filename = shift || die "Need filename.";
+    my $extension = shift || '';
+
+      while (-e "$filename$extension")
+      {
+          # already has a suffix?
+          if ($filename =~ m/(.*)\.([0-9]+)$/)
+          {
+              # increment suffix
+              $filename = $1 . "." . ($2+1);
+          }
+          else
+          {
+              # add suffix
+              $filename .= ".1";
+          }
+      }
+    return "$filename$extension";
+}
+
+# save screenshot
+sub screenshot
+{
+    my $self = shift;
+    my $outputfile = shift || 'screenshot';
+
+    $outputfile =~ s/\.png$//;
+    my $filename = $self->makefilename($outputfile, '.png');
+
+    # ensure that the serial port is opened
+    $self->openserial();
+
+    # we don't go into command mode because we don't want a screenshot of
+    # the screen displaying "command mode"..
+
+    $self->_dbg(1, "Getting screenshot.\n");
+
+    # tell the device that we want a screenshot
+    $self->{io}->write("[CatchScreen]\n");
+    $self->{io}->purge_rx();
+
+    $self->_dbg(1, "Waiting for screnshot data..\r");
+
+    # FIXME: cleanup
+    my $wait = 20;
+    my $tt = '';
+    my $timeout = 1000;
+    my @raw;
+    my $firstread = 1;
+    my $n = 0;
+    my $nn = 0;
+    my $nbits = 0;
+    my $ncols = 0;
+    my $nrows = 0;
+    my $expect0 = 0;
+    my $expect = 10;
+    while (($wait-- > 0 || $nn > 0 || $n < $expect) && $timeout-- > 0)
+    {
+        # wait a bit and read serial buffer
+        usleep(10000);
+        my $t = $self->{io}->input();
+
+        # add data to a buffer
+        $tt .= $t;
+
+        # process what is in the buffer so far
+        $nn = 0;
+        my $idx;
+        while ( ($idx = index($tt, "#")) >= $[ && $idx < length($tt)-8)
+        {
+            # chop the line from the buffer
+            $t = substr($tt, $idx, 8);
+            $tt = substr($tt, $idx+8);
+            $n++;
+            $nn++;
+            if ($t =~ m/^#(.)(..)(..)(..)/)
+            {
+                my $b = hex($1);
+                my $c = hex($2);
+                my $r = hex($3);
+                $raw[$b][$c][$r] = hex($4);
+                $nbits = $b if ($b > $nbits);
+                $ncols = $c if ($c > $ncols);
+                $nrows = $r if ($r > $nrows);
+                $expect0 = ($nbits * ($ncols+1)*($nrows+1));
+                $expect = $expect0 if ($expect0 > $expect);
+            }
+            $wait = 20;
+        }
+        $self->_dbg(1, "n:$n nbits:$nbits ncols:$ncols nrows:$nrows "
+                    . "expect:$expect nn:$nn timeout:$timeout           \r");
+    }
+    die "\nTimeout!" if ($timeout <= 0);
+
+    $ncols++;
+    $nrows++;
+
+    my $bitspercol = 8;
+    my $ncolours = 2**$nbits;
+    my $width = $ncols * $bitspercol;
+    my $height = $nrows;
+    $self->_dbg(1, "Got screenshot: %ix%ipx (%i colours)."
+                . "                                \n",
+               $width, $height, $ncolours);
+
+    # make image
+    my $img = new GD::Image($width, $height);
+    my @colours;
+    for (my $c = 0; $c < $ncolours; $c++)
+    {
+        my $greylevel = 255 - int($c * 255 / ($ncolours-1));
+        $colours[$c] = $img->colorAllocate($greylevel, $greylevel, $greylevel);
+    }
+    for (my $row = 0; $row < $nrows; $row++)
+    {
+        for (my $col = 0; $col < $ncols; $col++)
+        {
+            for (my $offset = 0; $offset < $bitspercol; $offset++)
+            {
+                my $c;
+                for (my $bit = 0; $bit < $nbits; $bit++)
+                {
+                    $c += (($raw[$bit+1][$col][$row] >> $offset) & 1) << $bit;
+                }
+                $img->setPixel(($col*$bitspercol)+$bitspercol-$offset, $row, $c);
+            }
+        }
+    }
+
+    # save image
+    $self->_dbg(1, "Saving image to %s.\n", $filename);
+    write_file($filename, { binmode => ':raw' }, $img->png(9));
+
+}
+
+
+# transforms WGS-84 lat/lon/height to Swiss CH1903 x/y/h (approximation)
+# from: Formeln und Konstanten für die Berechnung der Schweizerischen
+# schiefachsigen Zylinderprojektion und der Transformation zwischen
+# Koordinatensystemen, Swisstopo, 2004
+sub llh2xyz_swiss
+{
+    my $self = shift;
+    my $llh = shift || die "Need reference to list of lat/lon/height";
+    my @xyz;
+
+    my $lat = $llh->[0] * 3600; # [arcsec]
+    my $lon = $llh->[1] * 3600; # [arcsec]
+    my $ele = $llh->[2];
+
+    # intermediate values
+    my $p = ($lat - 169028.66) / 10000;
+    my $l = ($lon - 26782.5) / 10000;
+
+    # right-hand system, not the silly official system
+    $xyz[0] = 600072.37 + 211455.93*$l - 10938.51*$l*$p
+      - 0.36*$l*$p*$p - 44.54*$l*$l*$l;
+    $xyz[1] = 200147.07 + 308807.95*$p + 3745.25*$l*$l
+      + 76.63*$p*$p - 194.56*$l*$l*$p + 119.79*$p*$p*$p;
+
+    # the height from GPS is already orthometric, I think
+    #$xyz[2] = $ele - 49.55 + 2.73*$l + 6.94*$p;
+    $xyz[2] = $ele;
+
+    return @xyz;
+}
+
+
+# close serial port (no need to call this)
+sub closeserial
+{
+    my $self = shift;
+
+    # return if there's no serial port object
+    return if !defined($self->{io});
+
+    $self->_dbg(2, "Closing serial port.\n");
+    $self->{io}->close();
+    $self->{io} = undef;
+}
+
+# destructor
+sub DESTROY
+{
+    my $self = shift;
+    $self->restartgps();
+    $self->closeserial();
+    $self->_dbg(2, "Goodbye!\n");
+}
+
+
+__END__
+
+=head1 DESCRIPTION
+
+Description...
+
+=head1 WINTEC PROTOCOL AND LOG FORMAT
+
+=head2 Command Format
+
+send (PC --> GPS): B<@AL,a,b[,p]+CRLF>
+
+read (PC <-- GPS): B<@AL,a,b[,p],OK+CRLF>
+
+Where B<a> and B<n> specify the command and B<p> is an optional parameter to
+the argument.
+
+In all cases (but command 5,3) the GPS quotes the exact command followed by
+B<,OK> on success.
+
+On error it outputs B<err_cmd> or B<err_arg> instead of B<OK>.
+
+B<not_support_yet> is returned for commands that are not supported or not
+implemented.
+
+The GPS will store (or execute) the parameter B<p> when the command is sent to
+the GPS (setting).
+
+The GPS will return the saved parameter B<p> (payload) if it is not set when
+sending the command (polling).
+
+B<+CRLF> is \r\n.
+
+The command B<@AL> (or B<@AL,1xxxx> with password B<xxxx>) is used to "login"
+to the device. The device then returns B<LoginOK>.
+
+The WSG-1000 does not react on this command. But the command B<@AL,2,3> will
+put the device into command mode, which has the same effect. In fact, it will
+return B<LoginOK> three times before acknowledging the command.
+
+=head2 Available Commands
+
+The commands listed below should work on other Wintec receivers as
+well. However, only the Wintec WSG-1000 (a.k.a. Navilock NL-120GR) has been
+tested. The commands to and/or responses from this receiver may look different on
+other receivers.
+
+=head3 Unkown commands (group 1)
+
+=over 10
+
+=item B<1,1,x>, B<1,1>
+
+Apparently sets and gets the "auto sleep counter value". Whatever that would
+be. Returns B<not_support_yet> on the NL-120GR.
+
+=item B<1,2,x>, B<1,2>
+
+Apparently sets and gets the "over speed limit value". Returns B<err_cmd> on
+the NL-120GR.
+
+=back
+
+=head3 GPS control commands (group 2)
+
+=over 10
+
+=item B<2,1>
+
+Leaves the command mode and returns B<OK>. Maybe restarts the GPS.
+
+=item B<2,2>
+
+Leaves the command mode and returns B<OK>. Maybe restarts the GPS.
+
+=item B<2,3>
+
+Returns B<OK> and enables command mode (the display reads "Command Mode"). NMEA
+output is disabled during command mode (called "bypass" in the original specs).
+
+=item B<2,4>
+
+Returns B<not_support_yet>.
+
+=back
+
+=head3 Unknow commands (group 3)
+
+=over 10
+
+=item B<3,1,1xxx>
+
+Apparently sets the password to B<xxxx>, where x = [0-9]. Returns
+B<not_support_yet> on the NL-120GR.
+
+=item B<3,2>
+
+Apparently disables the password (once logged in with the password). Returns
+B<not_support_yet> on the NL-120GR.
+
+=back
+
+=head3 Memory info commands (group 4)
+
+=over 10
+
+=item B<4,1>
+
+Returns the memory ID (e.g. 48961). This is probably not very useful.
+
+=back
+
+=head3 Logging memory commands (group 5)
+
+The logged data is stored in the memory region returned by the B<5,1> and
+B<5,2> commands. The logger starts overwriting memory at the start of the
+memory when it reaches the end of it (i.e. when memory is full). Hence, if the
+address returned by the B<5,2> command is less than the address returned by
+B<5,1> command we have to read from the start of log address (returned by the
+B<5,1> command) to the end of memory (address returned by the B<5,10> command)
+and then from the start of the memory (address returned by the B<5,9> command)
+to the end of log address (returned by the B<5,2> command).
+
+=over 10
+
+=item B<5,1>
+
+Returns the start address of the log in memory (e.g. B<0>)
+
+=item B<5,2>
+
+Returns the end address of the log in memory (e.g. B<23472>)
+
+=item B<5,3,addr>
+
+Returns the chunk of data (up to 4096 bytes) at address B<addr> followed by a
+checksum string in the format B<@AL,CS,checksum,addr>. The B<checksum> is the
+hex representation of the XOR of all bytes in the data chunk (a 1-2 bytes
+string).
+
+=item B<5,4>, B<5,4>
+
+Deletes all log data. Note: takes 4-5 seconds to finish.
+
+=item B<5,5,0>
+
+Returns OK. FIXME: not sure what this does.
+
+=item B<5,6>
+
+Deletes all log and POI data. Note: takes 4-5 seconds to finish.
+
+=item B<5,7,x>
+
+Returns 0, for all B<x> (incl. empty string). FIXME: not sure what this does.
+
+=item B<5,8>
+
+Returns 2097152, which is 2*1024*1024. Probably the total memory size.
+
+=item B<5,9>
+
+Returns log memory start address (e.g. B<0>).
+
+=item B<5,10>
+
+Returns log memory end address (e.g. B<2072576>, which is ~2MB).
+
+=back
+
+=head3 Logging setup commands (group 6)
+
+Probably only positive integer values should be used as arguments to the log
+settings commands B<6,2> .. B<6,6>.
+
+=over 10
+
+=item B<6,1,x>, B<6,1>
+
+Switches logging mode to mode x or returns the currently active logging
+mode. B<x> is one of:
+
+B<0> logging off
+
+B<1> "course" logging: toggled by course change above a threshold when within velocity limits.
+
+B<2> "velocity" logging: fixed logging intervals when within corresponding velocity limits.
+
+B<3> "time" logging: fixed logging time interval when within velocity limits.
+
+B<4> "distance" logging: fixed logging distance interval when within velocity limits.
+
+B<5> "mixed" logging: fixed logging distance and time interval when within velocity limits.
+
+Note: this logging mode requires that "User Mode" is enabled in screen B0.
+
+=item B<6,2,v0> / B<6,2>
+
+Sets the lower velocity limit to B<v0> km/h (i.e. minimal velocity) (all
+logging modes) or returns the currently set value.
+
+=item B<6,3,v1> / B<6,3>
+
+Sets the upper velocity limit to B<v1> km/h (i.e. max. velocity) (all logging
+modes) or returns the currently set value.
+
+=item B<6,4,c> / B<6,4>
+
+Sets the course change threshold to +/- B<c> degrees ("course" logging mode) or
+returns the currently set threshold.
+
+=item B<6,5,x1>, B<6,6,x2>, B<6,7,x3> / B<6,5>, B<6,6>, B<6,7>
+
+Sets the velocities in km/h that subdevide the velocity interval defined by the
+lower (B<v0>) and the upper velocity limit (B<v1>) ("velocity" logging
+mode). It is probably a good idea to ensure that the values meet the following
+criteria: B<v0> < B<x1> < B<x2> < B<x3> < B<v1> or returns the currently set
+velocities.
+
+=item B<6,9,i1>, B<6,10,i2>, B<6,11,i3>, B<6,12,i4> / B<6,9>, B<6,10>, B<6,11>, B<6,12>
+
+Sets the logging intervals B<i1>, B<i2>, B<i3> and B<i4> in seconds for the
+corresponding velocity intervals [B<v0>:B<x1>], [B<x1>:B<x2>], [B<x2>:B<x3>]
+and [B<x3>:B<v1>] ("velocity" logging mode) or returns the currently set
+intervals.
+
+=item B<6,13,t> / B<6,13>
+
+Sets the logging time interval to B<t> seconds ("time" and "mixed" logging) or
+returns the currently set interval.
+
+=item B<6,14,d> / B<6,14>
+
+Sets the logging distance interval to B<d> metres ("distance" and "mixed"
+logging) or returns the currently set interval.
+
+=back
+
+=head3 Device info commands (group 7)
+
+Note: you must not use commas (,) in the strings to set the device info because
+it is used as a separator in the protocol. And you probably should avoid
+non-printable stuff.
+
+=over 10
+
+=item B<7,1>, B<7,1,name>
+
+Returns the device name (e.g. B<NL-120GR>).
+
+Sets the device name to B<name>. TimeMachineX (TMX) allows 19 characters
+here. More seems to be possible but breaks compatibility with TMX. The logger
+displays 15 characters of this.
+
+=item B<7,2>, B<7,1,info>
+
+Returns the device info.
+
+Sets the device info to B<info>. TimeMachineX (TMX) allows 19 characters
+here. More seems to break compatibility with TMX. A reasonable maximum size
+might be 32.
+
+=item B<7,3>, B<7,3,sn>
+
+Returns serial number (e.g. B<SN1234567890>).
+
+Sets the device serial number to B<sn>. TimeMachineX (TMX) does not allow to
+set this. A reasonable size limit might be 19 characters like B<info> and B<name>.
+
+=back
+
+=head3 Device version commands (group 8)
+
+=over 10
+
+=item B<8,1>
+
+Returns the hardware version (e.g. B<CX01-ABC-001>).
+
+=item B<8,2>
+
+Returns the sofware (firmware) date (e.g. B<Nov 24 2008>).
+
+=item B<8,3>
+
+Returns the logging format version (e.g. B<2.0>).
+
+=back
+
+=head3 Unknow commands (group 9)
+
+=over 10
+
+=item B<9,1,x>
+
+Returns different numbers for different B<x>. FIXME: don't know what this does.
+
+=item B<9,2,x>
+
+Returns B<err_cmd>. FIXME: don't know what this does.
+
+=back
+
+=head3 Marks commands (group 10)
+
+FIXME: not sure about the maximum number of marks on the device. 125 worked
+fine on a NL-120GR with firmware 1.1.7.0.
+
+=over 10
+
+=item B<10,1,i,lat,lon,ele,name>
+
+Stores a mark with icon number B<i> (0-255), latitude/longitude B<lat>/B<lon>
+(format: %.5f, 0-90/0-180), elevation B<ele> (format: %i) and the name B<name>
+(max. 12 characters). Use negative numbers for southern and western
+hemispheres, respectively.
+
+=item B<10,2,n>
+
+Reads mark B<n> (>=0) from device.
+
+=item B<10,3>
+
+Deletes all marks from the device.
+
+=item B<10,4>
+
+Returns number of marks stored on the device.
+
+=back
+
+=head2 Log Data Format
+
+The binary log (as read-out with the B<5,3> command) version 2.0 (see the
+B<8,3>) consists of 16 bytes long records starting at offset 0 (i.e. no
+header). Each record holds the date and time, latitude, longitude, elevation
+(orthometric height FIXME: really?), some flags and temperature and pressure
+readings. The format is as follows:
+
+A record consists of these fields (all little-endian):
+
+=over 4
+
+=item B<unsigned short int> (16 bits)
+
+The two least significant bits are flags that determine records marked as the
+start of a new track and a waypoint, respectively.
+
+The next 5 bits represent the temperature reading. Multiply the value by 2 and
+substract 10 to get the temperature in degrees Celsius. The range is -10 .. +52
+degrees Celsius. FIXME: sometimes the value is unexpectedly 0, leading to -10
+in the output. We'd probably had to ignore those.
+
+The 7 most significant bits represent the pressure reading. Shift it by 589 to
+get the ambient pressure in hPa (mbar). The range is 589 .. 1100 hPa.
+
+=item B<unsigned int> (32 bits)
+
+The 6 least significant bits are the seconds.
+
+The next 6 bits are the minutes.
+
+The next 5 bits are the hours.
+
+The next 5 bits are the days.
+
+The next 4 bits are the months.
+
+And the 6 most significant bits are the years since the year 2000.
+
+=item B<signed int> (32 bits)
+
+Latitude in decimal degrees scaled by 1e7.
+
+=item B<signed int> (32 bits)
+
+Longitude in decimal degrees scaled by 1e7.
+
+=item B<signed short int> (16 bits)
+
+Elevation in metres.
+
+=back
+
+=head2 Screenshots
+
+A screenshot can be requested by sending the string B<[CatchScreen]> (followed
+by a newline) to the device. The device will suspend (power off?) the GPS unit,
+which will stop NMEA output, and return a number of lines. Then the GPS unit is
+restarted and NMEA output starts again. The format of these lines is
+B<#bccrrpp> (followed by CRLF), where B<b> is the bit of the colour (1 or 2),
+B<cc> is the column (2 hex nibbles), B<rr> the row (2 hex nibbles) and B<pp>
+are the bits (pixels, 2 hex nibbles) corresponding to 8 pixels of the
+screen. The screen size of the WSG-1000 is 120x160 px. Hence, you'll see B<cc>
+from 0..15 (0x00..0x0e) and B<rr> from 0..159 (0x00..0x9f). The LSB (B<b>) of
+the colours of each group of 8 pixels (B<pp>) for all columns and rows is
+transferred first, followed by the same list for the MSB. Confusing, isn't it?
+
+=head1 NOTES ON THE WSG-1000 / NL-120GR
+
+=head2 Log Mode
+
+Screen B0 allows for setting different log modes. Set it to "User Mode" if you
+want to use a customised logging behaviour (B<--logmode>). The "Walk", "Bike"
+and "Motor" modes are defaults for the respective activity. Setting one of
+those does not affect the stored "User Mode" logging settings.
+
+=head1 TODO
+
+=over 8
+
+=item Implement KML export.
+
+=item Implement unicsv export and maybe a direct interface to gpsbabel.
+
+=item (Maybe) Implement real tk1 read/write (i.e. bin with header) as used by TMX i in bin_write and bin_read.
+
+=item Once that's done, use the header information (device name etc.) for --gpx etc.
+
+=item Implement some good msg()s when verbosity = 1.
+
+=item Handle die()s in WintecGPS nicely (i.e. better don't use them).
+
+=item Implement port autodetect (/dev/ttyUSB? etc.).
+
+=item What's the port on Macintosh OS X? And on Windoze?
+
+=item Implement retries in gpscmd(). Sometimes commands timeout.
+
+=item What's in the 24k in the memory region "end of log memory address" (5,10) - "total memory size" (5,8)?  Maybe the journey info? Can we read that at all?
+
+=item Document (names of) icons and make --getmarks and --setmarks use these.
+
+=item ...
+
+=back
+
+=head1 CREDITS
+
+=over 8
+
+=item C. S. for write_gpx().
+
+=item Navilock (http://www.navilock.de).
+
+=item The gpsbabel (http://www.gpsbabel.org), in particular to the authors of the file wbt-200.c.
+
+=item The Perl folks (http://www.ctan.org etc.).
+
+=item The Internet.
+
+=back
+
+=head1 LINKS
+
+=over 8
+
+=item http://www.wintec.com.tw
+
+=item http://www.navilock.de
+
+=item http://www.wintec-gps.de
+
+=item http://lai0330.googlepages.com/ -- Al's TMX homepage.
+
+=back
+
+=head1 AUTHOR
+
+Philippe Kehl <phkehl at gmx dot net>
+
+http://oinkzwurgl.org/wintec
+
+
+=head1 COPYRIGHT AND DISCLAIMER
+
+This program is Copyright 2009 by Philippe Kehl.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the Perl Artistic License or the GNU General Public License as
+published by the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+If you do not have a copy of the GNU General Public License write to the Free
+Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+=cut
+
+# eof
+
