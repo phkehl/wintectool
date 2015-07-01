@@ -1221,8 +1221,8 @@ sub downloadlog
     my $logsize = $self->{meminfo}->{logsize};
     if ($logsize <= 0)
     {
-        DEBUG1("Log is empty. Nothing to download.");
-        return 0;
+        WARNING("Log is empty. Nothing to download.");
+        return '';
     }
     my $nchunks = int( ($logsize / $self->{args}->{chunksize}) + 0.99999 );
 
