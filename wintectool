@@ -21,6 +21,7 @@ use Getopt::Long qw(:config bundling_override);
 use Pod::Usage;
 use File::Slurp;
 use Carp;
+use List::Util qw( sum min max );
 
 use Data::Dumper;
 $Data::Dumper::Terse = 1;
@@ -95,7 +96,7 @@ my %opts =
     outfilespecdefaults =>
     {
         _default => ":split:tracks:wgs84llh",
-        bin      => ":nosplit:tracks",
+        bin      => ":nosplit:tracks:wgs84llh",
         _split   => "TYPE_YYYYMMDD-HHMI.FMT",
         _nosplit => "TYPE_YYYYMMDD_all.FMT",
     },
@@ -230,6 +231,10 @@ Get device info:
 
     wintectool --info
 
+Use specific serial port device.
+
+    wintectool --info --device=/dev/ttyUSB0
+
 Set owner name:
 
     wintectool --setname=Schorsch
@@ -239,6 +244,10 @@ Retrieve waypoints, edit them, and store them again:
     wintectool --getmarks=meier.txt
     $EDITOR meier.txt
     wintectool --setmarks=meier.txt
+
+Retrieve all logs and store in ASCII format using default filenames:
+
+    wintectool --dat
 
 =cut
 
@@ -312,13 +321,14 @@ GetOptions(
 
 $SIG{__DIE__} = sub { DIE(@_); };
 
-# in Windoze, check if we have the appropriate colours translater
+# in Windoze, try loading the colours translater or disable colours
 if ( $^O =~ m/Win32/i )
 {
     eval "local \$^W = 0; require Win32::Console::ANSI;";
     if ($@) # fails loading properly on newer Windozen
     {
         undef $Win32::Console::ANSI::VERSION;
+        $opts{colours} = 0;
     }
 }
 
@@ -363,6 +373,7 @@ if ($opts{_dosetsn})
 
 if ($opts{_doinfo})
 {
+    PRINT("Getting device info.");
     my $i = $gps->getdevinfo();
     my $v = $gps->getverinfo();
     my $m = $gps->getmeminfo();
@@ -417,7 +428,13 @@ if ($#{$opts{outfiles}} > -1)
     }
 
     # decode data
-    $gps->decodedata($rawdata);
+    PRINT("Decoding raw data.");
+    my $tracksinfo = $gps->decodedata($rawdata);
+    PRINT("Got %i tracks (%i records total) and %i waypoints.",
+           $tracksinfo->{ntracks},
+           sum(@{$tracksinfo->{nrecords}}),
+           sum(@{$tracksinfo->{nwaypoints}}));
+
     # FIXME: catch errors and set $opts{_dodeletelog} = 0
 
     # process each output file
@@ -433,7 +450,7 @@ if ($#{$opts{outfiles}} > -1)
             for (my $track = 0; $track < $gps->{tracksinfo}->{ntracks}; $track++)
             {
                 # timestamp of first trackpoint or waypoint in this track
-                my $ts = $gps->{$outfilespec->{outdata}}->[$track]->[0]->{ts};
+                my $ts = $gps->{$outfilespec->{outdata}}->[$track]->[0]->{ts} || int(time());
                 my $filename = formatfilename($outfilespec, $ts, 5);
                 push(@filenames, $filename);
                 push(@tracks, [ $track ]);
@@ -456,22 +473,44 @@ if ($#{$opts{outfiles}} > -1)
             # call routine to write this format
             if ($outfilespec->{format} eq 'bin')
             {
-                $gps->write_bin($filenames[$n],
-                                $tracks[$n], $outfilespec->{outdata});
+                my $data = $gps->make_bin($tracks[$n], $outfilespec->{outdata});
+                if ($data)
+                {
+                    PRINT("Writing '%s' (tracks %s, %i bytes).",
+                          $filenames[$n], join(', ', @{$tracks[$n]}), length($data));
+                    File::Slurp::write_file($filenames[$n], { binmode => ':raw' }, $data);
+                }
             }
-            if ($outfilespec->{format} eq 'dat')
+            elsif ($outfilespec->{format} eq 'dat')
             {
-                $gps->write_dat($filenames[$n],
-                                $tracks[$n],
-                                $outfilespec->{outdata},
-                                $outfilespec->{datum},
-                                $opts{timezone});
+                my $data = $gps->make_dat(
+                    $tracks[$n], $outfilespec->{outdata}, $outfilespec->{datum}, $opts{timezone});
+                if ($data)
+                {
+                    PRINT("Writing '%s' (track %s, %i bytes)",
+                          $filenames[$n], join(', ', @{$tracks[$n]}), length($data));
+                    File::Slurp::write_file($filenames[$n], $data);
+                }
             }
-            if ($outfilespec->{format} eq 'gpx')
+            elsif ($outfilespec->{format} eq 'gpx')
             {
-                $gps->write_gpx($filenames[$n],
-                                $tracks[$n],
-                                $outfilespec->{outdata});
+                my $data = $gps->make_gpx($tracks[$n], $outfilespec->{outdata});
+                if ($data)
+                {
+                    PRINT("Writing '%s' (track %s, %i bytes)",
+                          $filenames[$n], join(', ', @{$tracks[$n]}), length($data));
+                    File::Slurp::write_file($filenames[$n], $data);
+                }
+            }
+            elsif ($outfilespec->{format} eq 'kml')
+            {
+                my $data = $gps->make_kml($tracks[$n], $outfilespec->{outdata});
+                if ($data)
+                {
+                    PRINT("Writing '%s' (track %s, %i bytes)",
+                          $filenames[$n], join(', ', @{$tracks[$n]}), length($data));
+                    File::Slurp::write_file($filenames[$n], $data);
+                }
             }
         }
     }
@@ -485,7 +524,7 @@ if (defined $opts{_dodeletelog})
 {
     if ($opts{_dodeletelog} eq '')
     {
-        ERROR("You must use --deletelog=yes to delete the log and marks memory.");
+        ERROR("You must use --deletelog=yes to delete the log memory.");
         exit(1);
     }
     else
@@ -622,7 +661,7 @@ sub DIE
 {
     my $why = shift;
     $why =~ s/\n$//;
-    print(STDERR _colour('DIE') . Capr::longmess($why) . _colour('OFF') . "\n");
+    print(STDERR _colour('DIE') . Carp::longmess($why) . _colour('OFF') . "\n");
     exit(1);
 }
 
@@ -649,7 +688,7 @@ sub _colour
 
 sub _stringify
 {
-    return map { ref($_) ? Data::Dumper::Dumper($_) : $_ } @_;
+    return map { defined $_ ? (ref($_) ? Data::Dumper::Dumper($_) : $_) : 'undef' } @_;
 }
 
 sub formatfilename
@@ -728,8 +767,7 @@ sub addoutputfile
     $filename = $opts{outfilespecdefaults}->{_nosplit}
       if ($filename eq '' && !$split);
 
-    DEBUG3("format=$format split=$split outdata=$outdata "
-            . "filename=$filename datum=$datum");
+    DEBUG1("selected: format=$format split=$split outdata=$outdata filename=$filename datum=$datum");
 
     # add to list of file
     my %outputfile = ( format => $format, filename => $filename,
@@ -754,7 +792,6 @@ use warnings;
 use Time::HiRes qw( usleep );
 use DateTime;
 use List::Util qw( sum min max );
-use File::Slurp;
 use GD;
 
 # wrap main debug printing functions
@@ -1290,7 +1327,6 @@ sub decodedata
     my $self = shift;
     my $rawdata = shift;
 
-
     # FIXME: we should check this (see FIXME in write_bin())
     ## get version info if not cached
     #$self->getverinfo() if (!defined $self->{verinfo});
@@ -1560,81 +1596,67 @@ sub deletemarks
     return ($self->gpscmd(10,3))[0]
 }
 
-# write binary dump of the data
-sub write_bin
+# make binary dump of the data
+sub make_bin
 {
     my $self = shift;
-    my $filename = shift || die "Need filename!";
-    my $tracks   = shift || die "Need reference to list of tracks!";
-    my $outdata  = shift || die "Need to know what data to save!";
+    my $tracks   = shift || die("Need reference to list of tracks!");
+    my $outdata  = shift || die("Need to know what data to save!");
 
-    # add or increment suffix to filename if file exists
-    $filename = $self->makefilename($filename);
+    my $data = '';
 
     # FIXME: store TK1 header with data format version etc.
-    DEBUG1("Saving binary %s data for tracks %s to %s.",
-                $outdata,
-                join(", ", map { $_ + 1 } @{$tracks}), $filename);
+    DEBUG1("Generating binary '%s' data for tracks %s.",
+           $outdata, join('+', @{$tracks}));
 
     # save track(s) to file
     foreach my $track (@{$tracks})
     {
         # skip if we do not have data for this track
-        if (!defined $self->{$outdata."raw"}->[$track])
+        if (!defined $self->{"${outdata}raw"}->[$track])
         {
-            DEBUG1("No data for track #%i, nothing to save.", $track+1);
+            WARNING("No data for track #%i.", $track);
             next;
         }
 
-        DEBUG2("Appending binary data for track #%i to %s.",
-                    $track+1, $filename);
-
-        # append to file
-        File::Slurp::write_file($filename, { binmode => ':raw', append => 1 },
-                   $self->{$outdata."raw"}->[$track]);
+        $data .= $self->{"${outdata}raw"}->[$track];
     }
+    return $data;
 }
 
 
-# write ASCII
-sub write_dat
+# make ASCII
+sub make_dat
 {
     my $self = shift;
-    my $filename = shift || die "Need filename!";
-    my $tracks   = shift || die "Need reference to list of tracks!";
-    my $outdata  = shift || die "Need to know what data to save!";
-    my $datum    = shift || die "Need to know which datum to use!";
+    my $tracks   = shift || die("Need reference to list of tracks!");
+    my $outdata  = shift || die("Need to know what data to save!");
+    my $datum    = shift || die("Need to know which datum to use!");
     my $timezone = shift || 'UTC';
 
-    # add or increment suffix to filename if file exists
-    $filename = $self->makefilename($filename);
+    my $data = '';
 
-    DEBUG1("Saving ASCII %s data for tracks %s to %s.",
-                $outdata,
-                join(", ", map { $_ + 1 } @{$tracks}), $filename);
+    DEBUG1("Generating ASCII '%s' data for tracks %s.",
+           $outdata, join(", ", @{$tracks}));
 
     # switch to Swiss timezone if user selected swissxyz
     $timezone = 'Europe/Zurich' if ($datum eq 'swissxyz');
 
-    # write header
+    # header
     my $header = '';
     $header = '# x y z'       if ($datum eq 'swissxyz');
     $header = '# lat lon ele' if ($datum eq 'wgs84llh');
     $header .= " unix_timestamp date time temp pres (flags)\n";
-    File::Slurp::write_file($filename, { binmode => ':raw', append => 1 }, $header);
 
     # save track(s) to file
     foreach my $track (@{$tracks})
     {
         # skip if we do not have data for this track
-        if (!defined $self->{$outdata."raw"}->[$track])
+        if (!defined $self->{"${outdata}raw"}->[$track])
         {
-            DEBUG1("No data for track #%i, nothing to save.", $track+1);
+            WARNING("No %s data for track #%i.", $outdata, $track);
             next;
         }
-
-        DEBUG2("Appending ASCII track data for track #%i to %s.",
-                    $track+1, $filename);
 
         my $trackdata = '';
         my $rec;
@@ -1665,36 +1687,36 @@ sub write_dat
         # add GNUplot style dataset separator
         $trackdata .= "\n\n";
 
-        # append data to file
-        File::Slurp::write_file($filename, { append => 1 }, $trackdata);
+        $data .= $trackdata;
     }
+
+    return $data ? "$header$data" : '';
 }
 
-# write KML format
-sub write_kml
+# make KML format
+sub make_kml
 {
     my $self = shift;
-    my $filename = shift || die "Need filename!";
-    my $tracks   = shift || die "Need reference to list of tracks!";
-    my $outdata  = shift || die "Need to know what data to save!";
+    my $tracks   = shift || die("Need reference to list of tracks!");
+    my $outdata  = shift || die("Need to know what data to save!");
 
-    DEBUG1("Saving KML format is *** NOT IMPLEMENTED ***.");
+    my $data = '';
+
+    WARNING("Making KML format is *** NOT IMPLEMENTED ***.");
+
+    return $data;
 }
 
-# write GPX format
-sub write_gpx
+# make GPX format
+sub make_gpx
 {
     my $self = shift;
-    my $filename = shift || die "Need filename!";
-    my $tracks   = shift || die "Need reference to list of tracks!";
-    my $outdata  = shift || die "Need to know what data to save!";
+    my $tracks   = shift || die("Need reference to list of tracks!");
+    my $outdata  = shift || die("Need to know what data to save!");
 
-    # add or increment suffix to filename if file exists
-    $filename = $self->makefilename($filename);
+    my $data = '';
 
-    DEBUG1("Saving GPX %s data for tracks %s to %s.",
-                $outdata,
-                join(", ", map { $_ + 1 } @{$tracks}), $filename);
+    DEBUG1("Making GPX %s data for tracks %s.", $outdata, join(", ", @{$tracks}));
 
     # write header
     my $header = '<?xml version="1.0" encoding="UTF-8"?>' ." \n"
@@ -1714,8 +1736,8 @@ sub write_gpx
                 $self->{tracksinfo}->{extent}->[0], $self->{tracksinfo}->{extent}->[1],
                 $self->{tracksinfo}->{extent}->[2], $self->{tracksinfo}->{extent}->[3]) . "\n"
       . '  </metadata>' . "\n";
-    File::Slurp::write_file($filename, { append => 1 }, $header);
 
+    $data .= $header;
 
     # write all tracks
     my $trackNum = 1;
@@ -1724,12 +1746,9 @@ sub write_gpx
         # skip if we do not have data for this track
         if (!defined $self->{$outdata."raw"}->[$track])
         {
-            DEBUG1("No data for track #%i, nothing to save.", $track+1);
+            WARNING("No data for track #%i.", $track);
             next;
         }
-
-        DEBUG2("Appending GPX track data for track #%i to %s.",
-                    $track+1, $filename);
 
         # open track
         my $trackdata = '  <trk>' . "\n"
@@ -1765,12 +1784,14 @@ sub write_gpx
         $trackdata .= "  </trk>\n";
 
         $trackNum++;
-        # flush data to file
-        File::Slurp::write_file($filename, { append => 1 }, $trackdata);
+
+        $data .= $trackdata;
     }
 
     # close the gpx tag
-    File::Slurp::write_file($filename, { append => 1 }, "</gpx>\n");
+    $data .= "</gpx>\n";
+
+    return $data;
 }
 
 
@@ -1941,31 +1962,7 @@ sub setlogmode
     return 0;
 }
 
-# adds or increments suffix if file already exists
-sub makefilename
-{
-    my $self = shift;
-    my $filename = shift || die "Need filename.";
-    my $extension = shift || '';
-
-      while (-e "$filename$extension")
-      {
-          # already has a suffix?
-          if ($filename =~ m/(.*)\.([0-9]+)$/)
-          {
-              # increment suffix
-              $filename = $1 . "." . ($2+1);
-          }
-          else
-          {
-              # add suffix
-              $filename .= ".1";
-          }
-      }
-    return "$filename$extension";
-}
-
-# save screenshot
+# make screenshot
 sub screenshot
 {
     my $self = shift;
