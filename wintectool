@@ -181,7 +181,7 @@ Note: apparently the logger can only delete the whole memory (log and marks). Th
 command downloads the marks first, then deletes the memory and finally stores the marks back to the
 device.
 
-=item C<< B<< --info >> >> and C<< B<< --no-info >> >>
+=item C<< B<< --info >> >>
 
 Do (not) print some info about the device. Needs a connected GPS device.
 
