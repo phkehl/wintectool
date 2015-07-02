@@ -192,18 +192,44 @@ device (up to 19 chars each, not visible on the display).
 
 =item C<< B<< --logmode >> >>, C<< B<< --logmode=format >> >>
 
-Gets and sets the current logging mode parameters. Valid formats are:
+Gets and sets the current logging mode parameters. You need to set the log mode (screen I<B0> on the
+device) on the device to "User Mode" for this to work. Valid formats are:
 
 =over
 
 =item * I<off> -- switches logging off
 
+=item * I<course,v0,v1,c> -- toggled by course change above a threshold when within velocity limits
+
+=item * I<velocity,v0,x1,x2,x3,v1,i1,i2,i3,i4> -- fixed logging intervals when within velocity limits
+
+=item * I<time,v0,v1,t> -- fixed logging time interval when within velocity limits
+
+=item * I<distance,v0,v1,d> -- fixed logging distance interval when within velocity limits
+
+=item * I<mixed,v0,v1,t,d> -- fixed logging distance and time interval when within velocity limits
+
 =back
 
-, I<course,v0,v1,c>,
-I<velocity,v0,x1,x2,x3,v1,i1,i2,i3,i4>, I<time,v0,v1,t>, I<distance,v0,v1,d> and
-I<mixed,v0,v1,t,d>. See the section "Logging setup commands" of the manual for details. You need to
-set the log mode (screen I<B0> on the device) on the device to "User Mode" for this to work.
+Where:
+
+=over
+
+=item * I<v0> and I<v1> -- lower (minimal) / upper (maximal) velocity limit [km/h]
+
+=item * I<c> -- course change threshold [deg]
+
+=item * I<x1>, I<x2> and I<x3> -- velocity division in the range I<v0>-I<v1> [km/h]
+
+=item * I<i1>, I<i2>, I<i3>, I<i4> -- logging intervals [s] for the velocity ranges I<v0>-I<x1>,
+            I<x1>-I<x2>, I<x2>-I<x3>, I<x3>-I<v1>
+
+=item * I<t> -- logging time interval [s]
+
+=item * I<d> -- logging distance interval [m]
+
+=back
+
 
 =item C<< B<< --getmarks >> >>, C<< B<< --getmarks=filename >> >>, C<< B<< --setmarks=filename >> >>, C<< B<< --deletemarks >>
 
@@ -1118,7 +1144,7 @@ sub setdevinfo
         # only if valid key
         next if ($key !~ m/^(?:name|info|sn)$/);
 
-        # remove unprintable chars and commas
+        # remove unprintable chars and illegal commas
         $args->{$key} =~ s/[^[:print:]]*//g;
         $args->{$key} =~ s/,/_/g;
 
@@ -2348,7 +2374,7 @@ C<0> logging off
 
 C<1> "course" logging: toggled by course change above a threshold when within velocity limits.
 
-C<2> "velocity" logging: fixed logging intervals when within corresponding velocity limits.
+C<2> "velocity" logging: fixed logging intervals when within velocity limits.
 
 C<3> "time" logging: fixed logging time interval when within velocity limits.
 
