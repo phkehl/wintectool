@@ -205,10 +205,10 @@ list of marks on the device. Deletes all marks on the device. The commands are e
 order: I<getmarks>, I<deletemarks>, I<setmarks>. The mark/file format is:
 C<icon#,lat,lon,elevation,name>.
 
-=item C<< B<< --screenshot >> >>
+=item C<< B<< --screenshot[=filename] >> >>
 
-Gets and saves a screenshot from the currently displayed screen to a PNG format file. Optionally
-filename without extension can be specified. C<screenshot.png> is the default file name.
+Gets and saves a screenshot from the currently displayed screen to a PNG format
+file. C<screenshot.png> is the default file name.
 
 =item C<< B<< -v|--verbose >> >>, C<< B<< -q|--quiet >> >>, C<< B<< -c|--colours >> >>
 
