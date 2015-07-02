@@ -76,7 +76,7 @@ my %gpsopts =
     gpstimezone => 'UTC',
 
     # devinfo (name, info, sn) max length
-    devinfomaxlen => 19,
+    devinfomaxlen => { name => 15, info => 19, sn => 19 },
 );
 
 my %opts =
@@ -148,15 +148,15 @@ Output file specification. The filename can contain the following placeholders:
 =item * I<YYYY>, I<YY>, I<MM>, I<DD>, I<HH>, I<MI>, I<SS> for year, two-digits year, day, month, hour,
         minute and second of the track start (or first waypoint).
 
-=item * I<N >(or more 'N's for zero padded numbers) for the track number.
+=item * I<N> (or more 'N's for zero padded numbers) for the track number.
 
-=item * I<FMT> for the format.
+=item * I<FMT> for the format (C<bin>, C<dat>, C<gpx>, C<kml>).
 
 =back
 
 This flag can be specified multiple times in order to produce multiple output files.
 
-The default output file spec is C<TYPE_YYYYMMDD-HHMI.FMT:split:tracks>.
+The default output file spec is C<TYPE_YYYYMMDD-HHMI.FMT:split:tracks.ext>.
 The I<bin> format uses C<TYPE_YYYYMMDD_all.FMT:nosplit:tracks> per default.
 
 The flags C<--split> (or C<--no-split>), C<--tracks> and C<--waypoints> can be used to override the
@@ -187,13 +187,20 @@ Do (not) print some info about the device. Needs a connected GPS device.
 
 =item C<< B<< --setname >> >>, C<< B<< --setinfo >> >>, C<< B<< --setsn >> >>
 
-Sets the I<name>, I<info> and serial number string on the device. The 15 first characters of the
-I<name> string are visible on the device. The maximum length for all three strings is 19 characters
-each.
+Sets the I<name> (up to 15 chars, visible on "I1" page), I<info> and serial number string on the
+device (up to 19 chars each, not visible on the display).
 
 =item C<< B<< --logmode >> >>, C<< B<< --logmode=format >> >>
 
-Gets and sets the current logging mode parameters. Valid formats are: I<off>, I<course,v0,v1,c>,
+Gets and sets the current logging mode parameters. Valid formats are:
+
+=over
+
+=item * I<off> -- switches logging off
+
+=back
+
+, I<course,v0,v1,c>,
 I<velocity,v0,x1,x2,x3,v1,i1,i2,i3,i4>, I<time,v0,v1,t>, I<distance,v0,v1,d> and
 I<mixed,v0,v1,t,d>. See the section "Logging setup commands" of the manual for details. You need to
 set the log mode (screen I<B0> on the device) on the device to "User Mode" for this to work.
@@ -1082,22 +1089,23 @@ sub setdevinfo
     foreach my $key (sort keys %{$args})
     {
         # only if valid key
-        next if ($key ne 'name' && $key ne 'info' && $key ne 'sn');
+        next if ($key !~ m/^(?:name|info|sn)$/);
+
+        # remove unprintable chars and commas
+        $args->{$key} =~ s/[^[:print:]]*//g;
+        $args->{$key} =~ s/,/_/g;
+
+        # truncate too long strings
+        my $maxlen = $self->{args}->{devinfomaxlen}->{$key};
+        if (length($args->{$key}) > $maxlen)
+        {
+            $args->{$key} = substr($args->{$key}, 0, $maxlen);
+            WARNING("Truncating too long string for '$key' to '%s'.", $args->{$key});
+        }
 
         # only if not already set
         if ($args->{$key} ne $self->{devinfo}->{$key})
         {
-            # remove unprintable chars and commas
-            $args->{$key} =~ s/[^[:print:]]*//g;
-            $args->{$key} =~ s/,/_/g;
-
-            # truncate too long strings
-            if (length($args->{$key}) > $self->{args}->{devinfomaxlen})
-            {
-                WARNING("Truncating too long string for '$key'.");
-                $args->{$key} = substr($args->{$key}, 0, $self->{args}->{devinfomaxlen});
-            }
-
             DEBUG1("Setting devinfo '%s' to [%s] (was: [%s]).",
                    $key, $args->{$key}, $self->{devinfo}->{$key});
 
