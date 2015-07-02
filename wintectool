@@ -27,7 +27,7 @@ use Data::Dumper;
 $Data::Dumper::Terse = 1;
 
 
-use constant COPYMSG => "wintectool -- Wintec WGS-1000 / Navilock NL-120GR management tool\n"
+use constant COPYMSG => "wintectool 2.0 -- Wintec WGS-1000 / Navilock NL-120GR management tool\n"
                       . "Copyright (c) 2009, 2015 Philippe Kehl <phkehl at gmail dot com> et al.";
 
 =pod
@@ -2599,13 +2599,11 @@ settings.
 
 =item * Implement unicsv export and maybe a direct interface to gpsbabel.
 
-=item * (Maybe) Implement real tk1 read/write (i.e. bin with header) as used by TMX i in bin_write and bin_read.
+=item * (Maybe) Implement real tk1 read/write (i.e. bin with header) as used by TMX in bin_write and bin_read.
 
 =item * Once that's done, use the header information (device name etc.) for --gpx etc.
 
 =item * Implement some good PRINT()s when verbosity = 1.
-
-=item * Handle die()s in WintecGPS nicely (i.e. better don't use them).
 
 =item * Implement port autodetect (/dev/ttyUSB? etc.).
 
@@ -2617,9 +2615,7 @@ settings.
 
 =item * Document (names of) icons and make --getmarks and --setmarks use these.
 
-=item * More error handling and propagation.
-
-=item * Add version number.
+=item * extract icons from firmware
 
 =item * ...
 
