@@ -256,6 +256,26 @@ Retrieve all logs and store in ASCII format using default filenames:
 
     wintectool --dat
 
+=head2 ORIGINAL MANUAL
+
+Some info from the original manual (Navilock NL-120GR version, mostly).
+
+=head3 Status LEDs
+
+=over
+
+=item * I<green steady> GPS acquisition, I<green blink> GPS PVT lock acquired
+
+=item * I<red steady> charging, I<red off> charged
+
+=item * I<orange blink> low battery
+
+=item * I<blue steady> bluetooth on
+
+=back
+
+To be continued...
+
 =cut
 
 GetOptions(
@@ -327,6 +347,7 @@ GetOptions(
 ##
 
 $SIG{__DIE__} = sub { DIE(@_); };
+$SIG{__WARN__} = sub { WARN(@_); };
 
 # in Windoze, try loading the colours translater or disable colours
 if ( $^O =~ m/Win32/i )
@@ -393,15 +414,12 @@ if ($opts{_doinfo})
 ##
 if (defined $opts{_dologmode})
 {
-    if ($opts{_dologmode} eq '')
-    {
-        PRINT("Current logging mode: %s", $gps->getlogmode());
-    }
-    else
+    if ($opts{_dologmode} ne '')
     {
         PRINT("Setting logging mode to: %s", $opts{_dologmode});
         $gps->setlogmode($opts{_dologmode});
     }
+    PRINT("Current logging mode: %s", $gps->getlogmode());
 }
 
 
@@ -672,6 +690,14 @@ sub DIE
     exit(1);
 }
 
+sub WARN
+{
+    my $why = shift;
+    $why =~ s/\n$//;
+    print(STDERR _colour('WARN') . Carp::longmess($why) . _colour('OFF') . "\n");
+    exit(1);
+}
+
 sub _colour
 {
     my $which = shift;
@@ -687,6 +713,7 @@ sub _colour
         WARNING => "\e[33m",
         ERROR   => "\e[31m",
         DIE     => "\e[1;31m",
+        WARN    => "\e[33m",
         OFF     => "\e[m",
     );
 
@@ -1840,13 +1867,12 @@ sub getlogmode
                            t => $t, d => $d,
                           );
 
-    DEBUG1("m=%i mode=%s v0=%i v1=%i c=%i x1=%i x2=%i x3=%i "
-                . "i1=%i i2=%i i3=%i i4=%i t=%i d=%i",
-                $self->{logmode}->{m}, $self->{logmode}->{mode},
-                $self->{logmode}->{v0}, $self->{logmode}->{v1}, $self->{logmode}->{c},
-                $self->{logmode}->{x1}, $self->{logmode}->{x2}, $self->{logmode}->{x3},
-                $self->{logmode}->{i1}, $self->{logmode}->{i2}, $self->{logmode}->{i3},
-                $self->{logmode}->{i4}, $self->{logmode}->{t}, $self->{logmode}->{d});
+    DEBUG1("m=%i mode=%s v0=%i v1=%i c=%i x1=%i x2=%i x3=%i i1=%i i2=%i i3=%i i4=%i t=%i d=%i",
+           $self->{logmode}->{m}, $self->{logmode}->{mode},
+           $self->{logmode}->{v0}, $self->{logmode}->{v1}, $self->{logmode}->{c},
+           $self->{logmode}->{x1}, $self->{logmode}->{x2}, $self->{logmode}->{x3},
+           $self->{logmode}->{i1}, $self->{logmode}->{i2}, $self->{logmode}->{i3},
+           $self->{logmode}->{i4}, $self->{logmode}->{t}, $self->{logmode}->{d});
 
     if    ($m == 0) { return 'off'; }
     elsif ($m == 1) { return "course,$v0,$v1,$c"; }
@@ -1958,7 +1984,7 @@ sub setlogmode
     foreach my $c (@cmds)
     {
         my @res = $self->gpscmd($c->[0], $c->[1], $c->[2]);
-        if ($res[0] != $c->[2])
+        if (!defined $res[0] || ($res[0] != $c->[2]))
         {
             ERROR("Failed setting logmode parameter %i: %i.",
                   $c->[1], $res[0]);
