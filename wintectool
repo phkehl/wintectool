@@ -27,7 +27,7 @@ use Data::Dumper;
 $Data::Dumper::Terse = 1;
 
 
-use constant COPYMSG => "wintectool 2.0 -- Wintec WGS-1000 / Navilock NL-120GR management tool\n"
+use constant COPYMSG => "wintectool 2.1-dev -- Wintec WGS-1000 / Navilock NL-120GR management tool\n"
                       . "Copyright (c) 2009, 2015 Philippe Kehl <phkehl at gmail dot com> et al.";
 
 =pod
