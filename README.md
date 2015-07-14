@@ -1,12 +1,55 @@
 # wintectool
 
-Wintec WSG-1000 / Navilock NL-120GR GPS Logger Download Utility
+## Description
 
-See the documentation built into the program:
+This is a script to manage a _Wintec WGS-1000_ ("G-Trender") a.k.a. _Navilock NL-120GR_ ("Tr@cksketch") GPS receiver / logger.
 
-./wintectool --man
+It is a [Perl](https://www.perl.org/) program that runs in Linux and in Windows ([Strawberry Perl](http://strawberryperl.com/)). However, the latter is largely untested. YMMV.
 
-or
+Features:
 
-perldoc wintectool
+- get and set device info (name, info and s/n strings)
+- configure logging modes
+- download logs (tracks and waypoints) in ASCII, raw and GPX format (various options for splitting and naming the files)
+- get and set marks
+- take screenshots
+
+## Copyright
+
+See source code.
+
+## Installation
+
+Copy the `wintectool` script somewhere and make it executable, e.g.:
+
+- `sudo install -m 0755 wintectool /usr/local/bin/wintectool`
+
+Install [Device::SerialPort](https://metacpan.org/pod/Device::SerialPort):
+
+- Debian, Ubuntu, et al.: `apt-get install libdevice-serialport-perl`
+
+## Usage
+
+By default the program does nothing.
+
+To get some information on the device say:
+
+- `wintectool --device /dev/ttyUSB0 --info`
+
+Multiple commands can be run in one go. E.g. to get the device info and download all tracks in ASCII format say:
+
+- `wintectool --device /dev/ttyUSB0 --info --dat`
+
+## Manual
+
+The manual is built into the program:
+
+- Help on the available flags: `wintectool --help`
+- Full manual: `wintectool --man`
+
+
+## Bugs, TODOs
+
+See POD / source code-
+
 
