@@ -48,7 +48,7 @@ Description...
 my %gpsopts =
 (
     # serial port
-    device    => '/dev/gps0',
+    device    => ($^O =~ m/Win32/i ? 'COM15' : '/dev/gps0'),
     baudrate  => 57600,
     parity    => 'none',
     databits  => 8,
@@ -368,17 +368,27 @@ GetOptions(
 ) || pod2usage({ -verbose => 0, -exitval => 1 });
 
 
+# make windows device name
+if ($^O =~ m/win32/i)
+{
+    $gpsopts{device} = "\\\\.\\$gpsopts{device}";
+}
+
 ##
 ## setup debugging output
 ##
 
-$SIG{__DIE__} = sub { DIE(@_); };
+$SIG{__DIE__} = sub { my $s = "@_"; $s =~ s/\r?\n$//; if ($^S) { WARNING($s) } else { DIE($s); } };
 $SIG{__WARN__} = sub { WARN(@_); };
 
 # in Windoze, try loading the colours translater or disable colours
 if ( $^O =~ m/Win32/i )
 {
-    eval "local \$^W = 0; require Win32::Console::ANSI;";
+    eval
+    {
+        local $^W = 0;
+        require Win32::Console::ANSI;
+    };
     if ($@) # fails loading properly on newer Windozen
     {
         undef $Win32::Console::ANSI::VERSION;
@@ -397,6 +407,10 @@ NOTICE(COPYMSG);
 ## create our GPS interface object
 ##
 my $gps = WintecGPS->new(\%gpsopts);
+if (!defined $gps)
+{
+    exit(1);
+}
 
 
 ##
@@ -878,14 +892,13 @@ sub new
     {
         eval
         {
-            local $^W = 0;
             #require Win32::API;
             #$Win32API::CommPort::RBUF_Size = $buffersize;
             require Win32::SerialPort;
         };
         if ($@)
         {
-            ERROR('Could not load Win32::SerialPort!');
+            ERROR('Could not load Win32::SerialPort! Please install it.');
             return undef;
         }
     }
@@ -898,7 +911,7 @@ sub new
         };
         if ($@)
         {
-            ERROR('Could not load Device::SerialPort!');
+            ERROR('Could not load Device::SerialPort! Please install it.');
             return undef;
         }
     }
@@ -915,29 +928,36 @@ sub openserial
     # return if port already open
     return if (defined $self->{io}); # port already open
 
+    DEBUG1("Opening serial port '%s'.", $self->{args}->{device});
+
     # initialise serial port object
     DEBUG2("Opening serial port.");
 
-    if ($^O =~ m/Win32/i)
+    eval
     {
-        $self->{io} = Win32::SerialPort->new($self->{args}->{device}) ||
-          die("Failed opening port $self->{args}->{device}.");
-    }
-    else
+        if ($^O =~ m/Win32/i)
+        {
+            $self->{io} = Win32::SerialPort->new($self->{args}->{device});
+        }
+        else
+        {
+            $self->{io} = Device::SerialPort->new($self->{args}->{device});
+        }
+
+        $self->{io}->baudrate($self->{args}->{baudrate});
+        $self->{io}->parity($self->{args}->{parity});
+        $self->{io}->databits($self->{args}->{databits});
+        $self->{io}->handshake($self->{args}->{handshake});
+        $self->{io}->write_settings();
+    };
+
+    if ($@)
     {
-        $self->{io} = Device::SerialPort->new($self->{args}->{device}) ||
-          die("Failed opening port $self->{args}->{device}.");
+        WARNING("Failed opening port $self->{args}->{device}: $@");
+        return 0;
     }
-    $self->{io}->baudrate($self->{args}->{baudrate})               ||
-      die("Failed setting baudrate: $self->{args}->{baudrate}.");
-    $self->{io}->parity($self->{args}->{parity})                   ||
-      die("Failed setting parity: $self->{args}->{parity}.");
-    $self->{io}->databits($self->{args}->{databits})               ||
-      die("Failed setting databits: $self->{args}->{databits}.");
-    $self->{io}->handshake($self->{args}->{handshake})             ||
-      die("Failed setting handshake: $self->{args}->{handshake}.");
-    $self->{io}->write_settings()                                  ||
-      die("Failed writing serial port settings.");
+
+    return 1;
 }
 
 # go into command mode
@@ -951,7 +971,7 @@ sub gocommandmode
     DEBUG1("Going into command mode.");
 
     # ensure that the serial port is opened
-    $self->openserial();
+    $self->openserial() || die("Ouch!");
 
     # go into command mode
     my $retries = 4;
@@ -2032,7 +2052,7 @@ sub screenshot
     my $filename = $self->makefilename($outputfile, '.png');
 
     # ensure that the serial port is opened
-    $self->openserial();
+    $self->openserial() || die('Ouch!');
 
     # we don't go into command mode because we don't want a screenshot of
     # the screen displaying "command mode"..
@@ -2602,8 +2622,6 @@ settings.
 =item * (Maybe) Implement real tk1 read/write (i.e. bin with header) as used by TMX in bin_write and bin_read.
 
 =item * Once that's done, use the header information (device name etc.) for --gpx etc.
-
-=item * Implement some good PRINT()s when verbosity = 1.
 
 =item * Implement port autodetect (/dev/ttyUSB? etc.).
 
