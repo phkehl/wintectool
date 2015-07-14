@@ -2623,8 +2623,6 @@ settings.
 
 =item * Once that's done, use the header information (device name etc.) for --gpx etc.
 
-=item * Implement some good PRINT()s when verbosity = 1.
-
 =item * Implement port autodetect (/dev/ttyUSB? etc.).
 
 =item * What's the port on Macintosh OS X? And on Windoze?
