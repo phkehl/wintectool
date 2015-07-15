@@ -24,7 +24,7 @@ Copy the `wintectool` script somewhere and make it executable, e.g.:
 
 - `sudo install -m 0755 wintectool /usr/local/bin/wintectool`
 
-Install dependencies ([Device::SerialPort](https://metacpan.org/pod/Device::SerialPort), [GD](https://metacpan.org/pod/GD), [Date::Time](https://metacpan.org/pod/Date::Time), [File::Slurp](https://metacpan.org/pod/File::Slurp), [Time::Hires](https://metacpan.org/pod/Time::Hires)):
+Install dependencies ([Device::SerialPort](https://metacpan.org/pod/Device::SerialPort), [GD](https://metacpan.org/pod/GD), [Date::Time](https://metacpan.org/pod/Date::Time), [File::Slurp](https://metacpan.org/pod/File::Slurp), [Time::Hires](https://metacpan.org/pod/Time::HiRes)):
 
 - Debian, Ubuntu, et al.: `apt-get install libdevice-serialport-perl libgd-gd2-perl libdatetime-perl libtime-hires-perl libfile-slurp-perl`
 
