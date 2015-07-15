@@ -2078,7 +2078,7 @@ sub screenshot
     my $nrows = 0;
     my $expect0 = 0;
     my $expect = 10;
-    while (($wait-- > 0 || $nn > 0 || $n < $expect) && $timeout-- > 0)
+    while ( ( ($wait-- > 0) || ($nn > 0) || ($n < $expect) ) && ($timeout-- > 0) )
     {
         # wait a bit and read serial buffer
         usleep(10e3);
